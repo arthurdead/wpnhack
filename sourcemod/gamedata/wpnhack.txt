@@ -1,0 +1,89 @@
+"Games"
+{
+	"tf"
+	{
+		"Signatures"
+		{
+			"ReadWeaponDataFromFileForSlot"
+			{
+				"library" "server"
+				"linux" "@_Z29ReadWeaponDataFromFileForSlotP11IFileSystemPKcPtPKh"
+			}
+			"CreateWeaponInfo"
+			{
+				"library" "server"
+				"linux" "@_Z16CreateWeaponInfov"
+			}
+			"GetFileWeaponInfoFromHandle"
+			{
+				"library" "server"
+				"linux" "@_Z27GetFileWeaponInfoFromHandlet"
+			}
+			"GetAmmoDef"
+			{
+				"library" "server"
+				"linux" "@_Z10GetAmmoDefv"
+			}
+			"m_WeaponInfoDatabase"
+			{
+				"library" "server"
+				"linux" "@_ZL20m_WeaponInfoDatabase"
+			}
+			"TranslateWeaponEntForClass"
+			{
+				"library" "server"
+				"linux" "@_Z26TranslateWeaponEntForClassPKci"
+			}
+			"CBaseCombatWeapon::Precache"
+			{
+				"library" "server"
+				"linux" "@_ZN17CBaseCombatWeapon8PrecacheEv"
+			}
+			"CTFPlayer::ItemsMatch"
+			{
+				"library" "server"
+				"linux" "@_ZN9CTFPlayer10ItemsMatchEP19TFPlayerClassData_tP13CEconItemViewS3_P13CTFWeaponBase"
+			}
+			"CTFPlayer::GiveNamedItem"
+			{
+				"library" "server"
+				"linux" "@_ZN9CTFPlayer13GiveNamedItemEPKciPK13CEconItemViewb"
+			}
+			"CTFPlayer::PickupWeaponFromOther"
+			{
+				"library" "server"
+				"linux" "@_ZN9CTFPlayer21PickupWeaponFromOtherEP16CTFDroppedWeapon"
+			}
+			"CTFWeaponBaseGun::GetProjectileSpeed"
+			{
+				"library" "server"
+				"linux" "@_ZN16CTFWeaponBaseGun18GetProjectileSpeedEv"
+			}
+			"FileWeaponInfo_t::Parse"
+			{
+				"library" "server"
+				"linux" "@_ZN16FileWeaponInfo_t5ParseEP9KeyValuesPKc"
+			}
+			"CTFWeaponInfo::Parse"
+			{
+				"library" "server"
+				"linux" "@_ZN13CTFWeaponInfo5ParseEP9KeyValuesPKc"
+			}
+		}
+		"Offsets"
+		{
+			"CGameRules::GetEncryptionKey"
+			{
+				"linux" "27"
+			}
+			"CTFWeaponBase::m_pWeaponInfo"
+			{
+				"linux" "4"
+			}
+			"CTFWeaponBase::m_iWeaponMode"
+			{
+				"linux" "4"
+			}
+		}
+	}
+}
