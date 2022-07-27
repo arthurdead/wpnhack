@@ -14,6 +14,18 @@ typeset wpnhack_weapon_callbacks
 native void set_weapon_function(int entity, const char[] name, wpnhack_weapon_callbacks func, any data = 0);
 #endif
 
+enum
+{
+	TF_AMMO_DUMMY = 0,	// Dummy index to make the CAmmoDef indices correct for the other ammo types.
+	TF_AMMO_PRIMARY,
+	TF_AMMO_SECONDARY,
+	TF_AMMO_METAL,
+	TF_AMMO_GRENADES1,
+	TF_AMMO_GRENADES2,
+	TF_AMMO_GRENADES3,	// Utility Slot Grenades
+	TF_AMMO_COUNT,
+};
+
 enum WeaponSound_t
 {
 	EMPTY,
