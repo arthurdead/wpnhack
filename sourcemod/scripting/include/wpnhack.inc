@@ -308,7 +308,7 @@ methodmap WeaponInfo < KeyValues
 
 	public void SetSound(WeaponSound_t sound, const char[] val)
 	{
-		if(this.__kv.JumpToKey("SoundData")) {
+		if(this.__kv.JumpToKey("SoundData", true)) {
 			this.__kv.SetString(__wpnhack_sound_names[view_as<int>(sound)], val);
 			this.__kv.GoBack();
 		}
@@ -618,7 +618,6 @@ stock CustomDatamap register_weapon(const char[] classname, const char[] name, W
 		sendtable.override_with(clientnet);
 	}
 	sendtable.set_network_name(netname);
-	sendtable.set_name(dtname);
 
 	KeyValues kv = info.__kv;
 	precache_weapon_kv(kv, classname, true);
