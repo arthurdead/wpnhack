@@ -5,6 +5,7 @@
 
 #include <sdkhooks>
 #include <tf2>
+#include <tf2_stocks>
 
 #if 0
 typeset wpnhack_weapon_callbacks
@@ -14,7 +15,7 @@ typeset wpnhack_weapon_callbacks
 native void set_weapon_function(int entity, const char[] name, wpnhack_weapon_callbacks func, any data = 0);
 #endif
 
-enum
+enum ETFAmmoType
 {
 	TF_AMMO_DUMMY = 0,	// Dummy index to make the CAmmoDef indices correct for the other ammo types.
 	TF_AMMO_PRIMARY,
@@ -25,6 +26,10 @@ enum
 	TF_AMMO_GRENADES3,	// Utility Slot Grenades
 	TF_AMMO_COUNT,
 };
+
+//native void tf_ammo_name(ETFAmmoType id, char[] name, len);
+
+//native ETFWeaponType tf_weapon_name_to_id(const char[] name);
 
 enum WeaponSound_t
 {
@@ -616,10 +621,6 @@ stock CustomDatamap register_weapon(const char[] classname, const char[] name, W
 	char netname[64];
 	netname[0] = 'C';
 	strcopy(netname[1], sizeof(netname)-1, name);
-
-	char dtname[64];
-	strcopy(dtname, sizeof(dtname), "DT_");
-	strcopy(dtname[3], sizeof(dtname)-3, name);
 
 	CustomEntityFactory factory = EntityFactoryDictionary.register_based_name(classname, based);
 	CustomDatamap datamap = CustomDatamap.from_factory(factory);

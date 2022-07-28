@@ -69,6 +69,16 @@
 				"library" "server"
 				"linux" "@_ZN13CTFWeaponInfo5ParseEP9KeyValuesPKc"
 			}
+			"GetWeaponId"
+			{
+				"library" "server"
+				"linux" "@_Z11GetWeaponIdPKc"
+			}
+			"GetAmmoName"
+			{
+				"library" "server"
+				"linux" "@_Z11GetAmmoNamei"
+			}
 		}
 		"Offsets"
 		{
