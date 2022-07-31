@@ -626,7 +626,7 @@ stock CustomDatamap register_weapon(const char[] classname, const char[] name, W
 	CustomDatamap datamap = CustomDatamap.from_factory(factory);
 	datamap.set_name(netname);
 
-	CustomSendtable sendtable = CustomSendtable.from_factory(factory, NULL_STRING);
+	CustomSendtable sendtable = CustomSendtable.from_factory(factory);
 	if(!IsNullString(clientnet) && clientnet[0] != '\0') {
 		sendtable.override_with(clientnet);
 	}
