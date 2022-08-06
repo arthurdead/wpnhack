@@ -487,6 +487,9 @@ enum
 	TF_NUM_PROJECTILES
 };
 
+#define TF_WEAPON_PRIMARY_MODE 0
+#define TF_WEAPON_SECONDARY_MODE 1
+
 struct WeaponData_t final
 {
 	int		m_nDamage;
@@ -552,6 +555,8 @@ public:
 	virtual void Parse( KeyValues *pKeyValuesData, const char *szWeaponName ) override
 	{
 		call_mfunc<void, CTFWeaponInfo, KeyValues *, const char *>(this, CTFWeaponInfoParseAddr, pKeyValuesData, szWeaponName);
+
+		m_WeaponData[TF_WEAPON_SECONDARY_MODE].m_flProjectileSpeed = pKeyValuesData->GetFloat("Secondary_ProjectileSpeed", 0.0f);
 	}
 
 	CTFWeaponInfo()
@@ -640,15 +645,21 @@ public:
 
 	struct custom_weapon_data
 	{
+		float m_flProjectileGravity = 0.0;
+		float m_flProjectileSpread = 0.0;
 	};
 
-	custom_weapon_data weapon_data[2];
+	custom_weapon_data m_WeaponDataCustom[2];
 
 	virtual void Parse(KeyValues *pKeyValuesData, const char *szWeaponName) override final
 	{
 		base_class::Parse(pKeyValuesData, szWeaponName);
 
-		
+		m_WeaponDataCustom[TF_WEAPON_PRIMARY_MODE].m_flProjectileGravity = pKeyValuesData->GetFloat("ProjectileGravity", 0.0f);
+		m_WeaponDataCustom[TF_WEAPON_PRIMARY_MODE].m_flProjectileSpread = pKeyValuesData->GetFloat("ProjectileSpread", 0.0f);
+
+		m_WeaponDataCustom[TF_WEAPON_SECONDARY_MODE].m_flProjectileGravity = pKeyValuesData->GetFloat("Secondary_ProjectileGravity", 0.0f);
+		m_WeaponDataCustom[TF_WEAPON_SECONDARY_MODE].m_flProjectileSpread = pKeyValuesData->GetFloat("Secondary_ProjectileSpread", 0.0f);
 	}
 };
 
@@ -661,6 +672,28 @@ DETOUR_DECL_MEMBER0(CTFWeaponBaseGunGetProjectileSpeed, float)
 
 	int m_iWeaponMode = *reinterpret_cast<int *>(reinterpret_cast<unsigned char *>(this) + CTFWeaponBase_m_iWeaponMode_offset);
 	return m_pWeaponInfo->m_WeaponData[m_iWeaponMode].m_flProjectileSpeed;
+}
+
+DETOUR_DECL_MEMBER0(CTFWeaponBaseGunGetProjectileGravity, float)
+{
+	CTFWeaponInfo *m_pWeaponInfo = *reinterpret_cast<CTFWeaponInfo **>(reinterpret_cast<unsigned char *>(this) + CTFWeaponBase_m_pWeaponInfo_offset);
+	if(!m_pWeaponInfo) {
+		return 0.0;
+	}
+
+	int m_iWeaponMode = *reinterpret_cast<int *>(reinterpret_cast<unsigned char *>(this) + CTFWeaponBase_m_iWeaponMode_offset);
+	return reinterpret_cast<custom_weapon_info *>(m_pWeaponInfo)->m_WeaponDataCustom[m_iWeaponMode].m_flProjectileGravity;
+}
+
+DETOUR_DECL_MEMBER0(CTFWeaponBaseGunGetProjectileSpread, float)
+{
+	CTFWeaponInfo *m_pWeaponInfo = *reinterpret_cast<CTFWeaponInfo **>(reinterpret_cast<unsigned char *>(this) + CTFWeaponBase_m_pWeaponInfo_offset);
+	if(!m_pWeaponInfo) {
+		return 0.0;
+	}
+
+	int m_iWeaponMode = *reinterpret_cast<int *>(reinterpret_cast<unsigned char *>(this) + CTFWeaponBase_m_iWeaponMode_offset);
+	return reinterpret_cast<custom_weapon_info *>(m_pWeaponInfo)->m_WeaponDataCustom[m_iWeaponMode].m_flProjectileSpread;
 }
 
 DETOUR_DECL_STATIC0(CreateWeaponInfo, FileWeaponInfo_t *)
@@ -1173,6 +1206,8 @@ CDetour *CTFPlayerPickupWeaponFromOtherDetour = nullptr;
 
 CDetour *CreateWeaponInfoDetour = nullptr;
 CDetour *CTFWeaponBaseGunGetProjectileSpeedDetour = nullptr;
+CDetour *CTFWeaponBaseGunGetProjectileGravityDetour = nullptr;
+CDetour *CTFWeaponBaseGunGetProjectileSpreadDetour = nullptr;
 
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
@@ -1214,6 +1249,12 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	CTFWeaponBaseGunGetProjectileSpeedDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseGunGetProjectileSpeed, "CTFWeaponBaseGun::GetProjectileSpeed")
 	CTFWeaponBaseGunGetProjectileSpeedDetour->EnableDetour();
+
+	CTFWeaponBaseGunGetProjectileGravityDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseGunGetProjectileGravity, "CTFWeaponBaseGun::GetProjectileGravity")
+	CTFWeaponBaseGunGetProjectileGravityDetour->EnableDetour();
+
+	CTFWeaponBaseGunGetProjectileSpreadDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseGunGetProjectileSpread, "CTFWeaponBaseGun::GetProjectileSpread")
+	CTFWeaponBaseGunGetProjectileSpreadDetour->EnableDetour();
 
 	sm_sendprop_info_t tmp_sp_info;
 
@@ -1263,6 +1304,8 @@ void Sample::SDK_OnUnload()
 
 	CreateWeaponInfoDetour->Destroy();
 	CTFWeaponBaseGunGetProjectileSpeedDetour->Destroy();
+	CTFWeaponBaseGunGetProjectileGravityDetour->Destroy();
+	CTFWeaponBaseGunGetProjectileSpreadDetour->Destroy();
 
 	plsys->RemovePluginsListener(this);
 	g_pSDKHooks->RemoveEntityListener(this);

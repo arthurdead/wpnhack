@@ -59,6 +59,16 @@
 				"library" "server"
 				"linux" "@_ZN16CTFWeaponBaseGun18GetProjectileSpeedEv"
 			}
+			"CTFWeaponBaseGun::GetProjectileGravity"
+			{
+				"library" "server"
+				"linux" "@_ZN16CTFWeaponBaseGun20GetProjectileGravityEv"
+			}
+			"CTFWeaponBaseGun::GetProjectileSpread"
+			{
+				"library" "server"
+				"linux" "@_ZN16CTFWeaponBaseGun19GetProjectileSpreadEv"
+			}
 			"FileWeaponInfo_t::Parse"
 			{
 				"library" "server"

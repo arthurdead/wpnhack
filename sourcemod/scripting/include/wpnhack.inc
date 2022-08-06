@@ -597,6 +597,18 @@ methodmap TFWeaponData < Handle
 		{ this.__set_flt("ProjectileSpeed", val); }
 	}
 
+	property float ProjectileGravity
+	{
+		public set(float val)
+		{ this.__set_flt("ProjectileGravity", val); }
+	}
+
+	property float ProjectileSpread
+	{
+		public set(float val)
+		{ this.__set_flt("ProjectileSpread", val); }
+	}
+
 	property float SmackDelay
 	{
 		public set(float val)
@@ -634,7 +646,6 @@ stock CustomDatamap register_weapon(const char[] classname, const char[] name, W
 
 	KeyValues kv = info.__kv;
 	precache_weapon_kv(kv, classname, true);
-	delete info;
 
 	return datamap;
 }
