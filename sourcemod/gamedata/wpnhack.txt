@@ -1,5 +1,15 @@
 "Games"
 {
+	"left4dead2"
+	{
+		"Offsets"
+		{
+			"CBaseEntity::FireBullets"
+			{
+				"linux" "123"
+			}
+		}
+	}
 	"tf"
 	{
 		"Signatures"
@@ -103,6 +113,18 @@
 			"CTFWeaponBase::m_iWeaponMode"
 			{
 				"linux" "4"
+			}
+			"CGameRules::GetSkillLevel"
+			{
+				"linux" "51"
+			}
+			"CGameRules::GetAmmoQuantityScale"
+			{
+				"linux" "101"
+			}
+			"CBaseEntity::FireBullets"
+			{
+				"linux" "116"
 			}
 		}
 	}

@@ -45,6 +45,7 @@ using namespace std::literals::string_view_literals;
 #include <filesystem.h>
 #include <CDetour/detours.h>
 #include <ISDKHooks.h>
+#include <shareddefs.h>
 
 /**
  * @file extension.cpp
@@ -59,7 +60,6 @@ static ISDKHooks *g_pSDKHooks{nullptr};
 
 typedef unsigned short WEAPON_FILE_INFO_HANDLE;
 
-class CGameRules;
 struct FileWeaponInfo_t;
 class IFileSystem;
 
@@ -107,6 +107,16 @@ T void_to_func(void *ptr)
 	p = ptr;
 	return f;
 }
+
+template <typename T>
+void *func_to_void(T ptr)
+{
+	union { T f; void *p; };
+	f = ptr;
+	return p;
+}
+
+class CGameRules;
 
 ISDKTools *g_pSDKTools = nullptr;
 
@@ -311,9 +321,64 @@ struct CAmmoDef
 		m_nAmmoIndex++;
 		return true;
 	}
+
+	int	PlrDamage(int nAmmoIndex)
+	{
+		if ( nAmmoIndex < 1 || nAmmoIndex >= m_nAmmoIndex )
+			return 0;
+
+		if ( m_AmmoType[nAmmoIndex].pPlrDmg == USE_CVAR )
+		{
+			if ( m_AmmoType[nAmmoIndex].pPlrDmgCVar )
+			{
+				return m_AmmoType[nAmmoIndex].pPlrDmgCVar->GetFloat();
+			}
+
+			return 0;
+		}
+		else
+		{
+			return m_AmmoType[nAmmoIndex].pPlrDmg;
+		}
+	}
+
+	int	NPCDamage(int nAmmoIndex)
+	{
+		if ( nAmmoIndex < 1 || nAmmoIndex >= m_nAmmoIndex )
+			return 0;
+
+		if ( m_AmmoType[nAmmoIndex].pNPCDmg == USE_CVAR )
+		{
+			if ( m_AmmoType[nAmmoIndex].pNPCDmgCVar )
+			{
+				return m_AmmoType[nAmmoIndex].pNPCDmgCVar->GetFloat();
+			}
+
+			return 0;
+		}
+		else
+		{
+			return m_AmmoType[nAmmoIndex].pNPCDmg;
+		}
+	}
+
+	int	DamageType(int nAmmoIndex)
+	{
+		if (nAmmoIndex < 1 || nAmmoIndex >= m_nAmmoIndex)
+			return 0;
+
+		return m_AmmoType[nAmmoIndex].nDamageType;
+	}
 };
 
 void *GetAmmoDefAddr;
+
+int Sample::PlrDamage(int nAmmoIndex)
+{ return (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))()->PlrDamage(nAmmoIndex); }
+int Sample::NPCDamage(int nAmmoIndex)
+{ return (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))()->NPCDamage(nAmmoIndex); }
+int Sample::DamageType(int nAmmoIndex)
+{ return (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))()->DamageType(nAmmoIndex); }
 
 void *m_WeaponInfoDatabaseAddr;
 
@@ -1004,8 +1069,17 @@ cell_t weapon_info_count(IPluginContext *pContext, const cell_t *params)
 	return WeaponInfoDatabase()->Count();
 }
 
+int CBaseEntityFireBullets = -1;
+
+struct FireBulletsInfo_t;
+
 class CBaseEntity : public IServerEntity
 {
+public:
+	void FireBullets( const FireBulletsInfo_t &info )
+	{
+		call_vfunc<void, CBaseEntity, const FireBulletsInfo_t &>(this, CBaseEntityFireBullets, info);
+	}
 };
 
 class CTFWeaponBase : public CBaseEntity
@@ -1112,6 +1186,50 @@ void Sample::OnPluginUnloaded(IPlugin *plugin) noexcept
 #endif
 }
 
+static cell_t BaseEntityFireBullets(IPluginContext *pContext, const cell_t *params)
+{
+	CBaseEntity *pEntity = (CBaseEntity *)gamehelpers->ReferenceToEntity(params[1]);
+	if(!pEntity) {
+		return pContext->ThrowNativeError("Invalid Entity Reference/Index %i", params[1]);
+	}
+	
+	FireBulletsInfo_t info{};
+	
+	cell_t *addr = nullptr;
+	pContext->LocalToPhysAddr(params[2], &addr);
+
+	info.m_iShots = addr[0];
+	info.m_vecSrc.x = sp_ctof(addr[1]);
+	info.m_vecSrc.y = sp_ctof(addr[2]);
+	info.m_vecSrc.z = sp_ctof(addr[3]);
+	info.m_vecDirShooting.x = sp_ctof(addr[4]);
+	info.m_vecDirShooting.y = sp_ctof(addr[5]);
+	info.m_vecDirShooting.z = sp_ctof(addr[6]);
+	info.m_vecSpread.x = sp_ctof(addr[7]);
+	info.m_vecSpread.y = sp_ctof(addr[8]);
+	info.m_vecSpread.z = sp_ctof(addr[9]);
+	info.m_flDistance = sp_ctof(addr[10]);
+	info.m_iAmmoType = addr[11];
+	info.m_iTracerFreq = addr[12];
+	info.m_flDamage = sp_ctof(addr[13]);
+#if SOURCE_ENGINE == SE_TF2
+	info.m_iPlayerDamage = addr[14];
+#elif SOURCE_ENGINE == SE_LEFT4DEAD2
+	info.m_flPlayerDamage = addr[14];
+#endif
+	info.m_nFlags = addr[15];
+	info.m_flDamageForceScale = sp_ctof(addr[16]);
+	info.m_pAttacker = gamehelpers->ReferenceToEntity(addr[17]);
+	info.m_pAdditionalIgnoreEnt = gamehelpers->ReferenceToEntity(addr[18]);
+	info.m_bPrimaryAttack = addr[19];
+#if SOURCE_ENGINE == SE_TF2
+	info.m_bUseServerRandomSeed = addr[20];
+#endif
+	
+	pEntity->FireBullets(info);
+	return 0;
+}
+
 sp_nativeinfo_t natives[] =
 {
 	//{"set_weapon_function", set_weapon_function},
@@ -1124,6 +1242,7 @@ sp_nativeinfo_t natives[] =
 	{"get_ammo_index", get_ammo_index},
 	{"add_ammo_type", add_ammo_type},
 	{"add_ammo_type_cvar", add_ammo_type_cvar},
+	{"FireBullets", BaseEntityFireBullets},
 	{NULL, NULL}
 };
 
@@ -1209,6 +1328,68 @@ CDetour *CTFWeaponBaseGunGetProjectileSpeedDetour = nullptr;
 CDetour *CTFWeaponBaseGunGetProjectileGravityDetour = nullptr;
 CDetour *CTFWeaponBaseGunGetProjectileSpreadDetour = nullptr;
 
+int CGameRulesGetSkillLevel = -1;
+
+class CGameRules
+{
+public:
+	int GetSkillLevel()
+	{
+		return call_vfunc<int>(this, CGameRulesGetSkillLevel);
+	}
+};
+
+static bool gamerules_vtable_assigned{false};
+
+// Quantity scale for ammo received by the player.
+ConVar	sk_ammo_qty_scale1 ( "sk_ammo_qty_scale1", "1.20", FCVAR_REPLICATED );
+ConVar	sk_ammo_qty_scale2 ( "sk_ammo_qty_scale2", "1.00", FCVAR_REPLICATED );
+ConVar	sk_ammo_qty_scale3 ( "sk_ammo_qty_scale3", "0.60", FCVAR_REPLICATED );
+
+class GameRulesVTableHack
+{
+public:
+	float GetAmmoQuantityScale( int iAmmoIndex )
+	{
+		CGameRules *pThis = (CGameRules *)this;
+
+		switch( pThis->GetSkillLevel() )
+		{
+		case SKILL_EASY:
+			return sk_ammo_qty_scale1.GetFloat();
+
+		case SKILL_MEDIUM:
+			return sk_ammo_qty_scale2.GetFloat();
+
+		case SKILL_HARD:
+			return sk_ammo_qty_scale3.GetFloat();
+
+		default:
+			return 0.0f;
+		}
+	}
+};
+
+#include <sourcehook/sh_memory.h>
+
+int CGameRulesGetAmmoQuantityScale = -1;
+
+void Sample::OnCoreMapStart(edict_t * pEdictList, int edictCount, int clientMax)
+{
+	if(!gamerules_vtable_assigned) {
+		CGameRules *gamerules{(CGameRules *)g_pSDKTools->GetGameRules()};
+		if(gamerules) {
+			void **vtabl = *(void ***)gamerules;
+
+			SourceHook::SetMemAccess(vtabl, (CGameRulesGetAmmoQuantityScale * sizeof(void *)) + 4, SH_MEM_READ|SH_MEM_WRITE|SH_MEM_EXEC);
+
+			vtabl[CGameRulesGetAmmoQuantityScale] = func_to_void(&GameRulesVTableHack::GetAmmoQuantityScale);
+
+			gamerules_vtable_assigned = true;
+		}
+	}
+}
+
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
 	gameconfs->LoadGameConfigFile("wpnhack", &g_pGameConf, nullptr, 0);
@@ -1223,6 +1404,11 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	g_pGameConf->GetMemSig("CTFWeaponInfo::Parse", &CTFWeaponInfoParseAddr);
 
 	g_pGameConf->GetMemSig("GetAmmoDef", &GetAmmoDefAddr);
+
+	g_pGameConf->GetOffset("CGameRules::GetAmmoQuantityScale", &CGameRulesGetAmmoQuantityScale);
+	g_pGameConf->GetOffset("CGameRules::GetSkillLevel", &CGameRulesGetSkillLevel);
+
+	g_pGameConf->GetOffset("CBaseEntity::FireBullets", &CBaseEntityFireBullets);
 
 	int tmp_off;
 
@@ -1273,6 +1459,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	ammo_handle = handlesys->CreateType("ammotype", this, 0, nullptr, nullptr, myself->GetIdentity(), nullptr);
 
+	sharesys->AddInterface(myself, this);
 	sharesys->RegisterLibrary(myself, "wpnhack");
 
 	sharesys->AddNatives(myself, natives);
@@ -1317,11 +1504,6 @@ bool Sample::RegisterConCommandBase(ConCommandBase *pCommand)
 {
 	META_REGCVAR(pCommand);
 	return true;
-}
-
-void Sample::OnCoreMapStart(edict_t * pEdictList, int edictCount, int clientMax)
-{
-	
 }
 
 bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool late)
