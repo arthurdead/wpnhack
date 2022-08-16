@@ -1390,6 +1390,44 @@ void Sample::OnCoreMapStart(edict_t * pEdictList, int edictCount, int clientMax)
 	}
 }
 
+enum ETFAmmoType
+{
+	TF_AMMO_DUMMY = 0,	// Dummy index to make the CAmmoDef indices correct for the other ammo types.
+	TF_AMMO_PRIMARY,
+	TF_AMMO_SECONDARY,
+	TF_AMMO_METAL,
+	TF_AMMO_GRENADES1,
+	TF_AMMO_GRENADES2,
+	TF_AMMO_GRENADES3,	// Utility Slot Grenades
+	TF_AMMO_COUNT,
+
+	//
+	// ADD NEW ITEMS HERE TO AVOID BREAKING DEMOS
+	//
+};
+
+struct ammo_dmg_cvar_t
+{
+	ConVar *plr_dmg;
+	ConVar *npc_dmg;
+
+	~ammo_dmg_cvar_t()
+	{
+		delete plr_dmg;
+		delete npc_dmg;
+	}
+};
+
+static ammo_dmg_cvar_t tf_ammo_dmg_cvars[TF_AMMO_COUNT]{
+	{new ConVar{"sk_plr_dmg_dummy", "0"}, new ConVar{"sk_npc_dmg_dummy", "0"}},
+	{new ConVar{"sk_plr_dmg_primary", "6"}, new ConVar{"sk_npc_dmg_primary", "6"}},
+	{new ConVar{"sk_plr_dmg_secondary", "15"}, new ConVar{"sk_npc_dmg_secondary", "15"}},
+	{new ConVar{"sk_plr_dmg_metal", "0"}, new ConVar{"sk_npc_dmg_metal", "0"}},
+	{new ConVar{"sk_plr_dmg_grenade1", "120"}, new ConVar{"sk_npc_dmg_grenade1", "120"}},
+	{new ConVar{"sk_plr_dmg_grenade2", "120"}, new ConVar{"sk_npc_dmg_grenade2", "120"}},
+	{new ConVar{"sk_plr_dmg_grenade3", "120"}, new ConVar{"sk_npc_dmg_grenade3", "120"}},
+};
+
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
 	gameconfs->LoadGameConfigFile("wpnhack", &g_pGameConf, nullptr, 0);
@@ -1463,6 +1501,15 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	sharesys->RegisterLibrary(myself, "wpnhack");
 
 	sharesys->AddNatives(myself, natives);
+
+	CAmmoDef *def = (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))();
+
+	for ( int i=1; i < TF_AMMO_COUNT; i++ ) {
+		def->m_AmmoType[i].pPlrDmgCVar = tf_ammo_dmg_cvars[i].plr_dmg;
+		def->m_AmmoType[i].pPlrDmg = USE_CVAR;
+		def->m_AmmoType[i].pNPCDmgCVar = tf_ammo_dmg_cvars[i].npc_dmg;
+		def->m_AmmoType[i].pNPCDmg = USE_CVAR;
+	}
 
 	return true;
 }
