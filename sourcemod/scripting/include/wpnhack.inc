@@ -15,7 +15,7 @@ typeset wpnhack_weapon_callbacks
 native void set_weapon_function(int entity, const char[] name, wpnhack_weapon_callbacks func, any data = 0);
 #endif
 
-enum ETFAmmoType
+enum //ETFAmmoType
 {
 	TF_AMMO_DUMMY = 0,	// Dummy index to make the CAmmoDef indices correct for the other ammo types.
 	TF_AMMO_PRIMARY,
@@ -710,8 +710,12 @@ enum struct FireBulletsInfo_t
 	int m_iAmmoType;
 	int m_iTracerFreq;
 	float m_flDamage;
+#if defined GAME_TF2
 	int m_iPlayerDamage;	// Damage to be used instead of m_flDamage if we hit a player
-	int m_nFlags;			// See FireBulletsFlags_t
+#elseif defined GAME_L4D2
+	float m_flPlayerDamage;
+#endif
+	FireBulletsFlags_t m_nFlags;			// See FireBulletsFlags_t
 	float m_flDamageForceScale;
 	int m_pAttacker;
 	int m_pAdditionalIgnoreEnt;
@@ -719,6 +723,18 @@ enum struct FireBulletsInfo_t
 #if defined GAME_TF2
 	bool m_bUseServerRandomSeed;
 #endif
+
+	void Init()
+	{
+		this.m_iShots = 1;
+		this.m_flDistance = 8192.0;
+		this.m_iTracerFreq = 4;
+		this.m_pAttacker = -1;
+		this.m_iAmmoType = TF_AMMO_PRIMARY;
+		this.m_pAdditionalIgnoreEnt = -1;
+		this.m_flDamageForceScale = 1.0;
+		this.m_bPrimaryAttack = true;
+	}
 }
 
 #define FireBulletsInfo_tVar any[]

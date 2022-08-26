@@ -1186,6 +1186,59 @@ void Sample::OnPluginUnloaded(IPlugin *plugin) noexcept
 #endif
 }
 
+Vector addr_deref_vec(const cell_t *&addr)
+{
+	Vector ret;
+
+	ret.x = sp_ctof(*addr);
+	++addr;
+
+	ret.y = sp_ctof(*addr);
+	++addr;
+
+	ret.z = sp_ctof(*addr);
+	++addr;
+
+	return ret;
+}
+
+void AddrToBulletInfo(const cell_t *addr, FireBulletsInfo_t &info)
+{
+	info.m_iShots = *addr;
+	++addr;
+	info.m_vecSrc = addr_deref_vec(addr);
+	info.m_vecDirShooting = addr_deref_vec(addr);
+	info.m_vecSpread = addr_deref_vec(addr);
+	info.m_flDistance = sp_ctof(*addr);
+	++addr;
+	info.m_iAmmoType = *addr;
+	++addr;
+	info.m_iTracerFreq = *addr;
+	++addr;
+	info.m_flDamage = sp_ctof(*addr);
+	++addr;
+#if SOURCE_ENGINE == SE_TF2
+	info.m_iPlayerDamage = *addr;
+#elif SOURCE_ENGINE == SE_LEFT4DEAD2
+	info.m_flPlayerDamage = sp_ctof(*addr);
+#endif
+	++addr;
+	info.m_nFlags = *addr;
+	++addr;
+	info.m_flDamageForceScale = sp_ctof(*addr);
+	++addr;
+	info.m_pAttacker = gamehelpers->ReferenceToEntity(*addr);
+	++addr;
+	info.m_pAdditionalIgnoreEnt = gamehelpers->ReferenceToEntity(*addr);
+	++addr;
+	info.m_bPrimaryAttack = *addr;
+	++addr;
+#if SOURCE_ENGINE == SE_TF2
+	info.m_bUseServerRandomSeed = *addr;
+	++addr;
+#endif
+}
+
 static cell_t BaseEntityFireBullets(IPluginContext *pContext, const cell_t *params)
 {
 	CBaseEntity *pEntity = (CBaseEntity *)gamehelpers->ReferenceToEntity(params[1]);
@@ -1198,34 +1251,8 @@ static cell_t BaseEntityFireBullets(IPluginContext *pContext, const cell_t *para
 	cell_t *addr = nullptr;
 	pContext->LocalToPhysAddr(params[2], &addr);
 
-	info.m_iShots = addr[0];
-	info.m_vecSrc.x = sp_ctof(addr[1]);
-	info.m_vecSrc.y = sp_ctof(addr[2]);
-	info.m_vecSrc.z = sp_ctof(addr[3]);
-	info.m_vecDirShooting.x = sp_ctof(addr[4]);
-	info.m_vecDirShooting.y = sp_ctof(addr[5]);
-	info.m_vecDirShooting.z = sp_ctof(addr[6]);
-	info.m_vecSpread.x = sp_ctof(addr[7]);
-	info.m_vecSpread.y = sp_ctof(addr[8]);
-	info.m_vecSpread.z = sp_ctof(addr[9]);
-	info.m_flDistance = sp_ctof(addr[10]);
-	info.m_iAmmoType = addr[11];
-	info.m_iTracerFreq = addr[12];
-	info.m_flDamage = sp_ctof(addr[13]);
-#if SOURCE_ENGINE == SE_TF2
-	info.m_iPlayerDamage = addr[14];
-#elif SOURCE_ENGINE == SE_LEFT4DEAD2
-	info.m_flPlayerDamage = addr[14];
-#endif
-	info.m_nFlags = addr[15];
-	info.m_flDamageForceScale = sp_ctof(addr[16]);
-	info.m_pAttacker = gamehelpers->ReferenceToEntity(addr[17]);
-	info.m_pAdditionalIgnoreEnt = gamehelpers->ReferenceToEntity(addr[18]);
-	info.m_bPrimaryAttack = addr[19];
-#if SOURCE_ENGINE == SE_TF2
-	info.m_bUseServerRandomSeed = addr[20];
-#endif
-	
+	::AddrToBulletInfo(addr, info);
+
 	pEntity->FireBullets(info);
 	return 0;
 }
