@@ -828,7 +828,7 @@ bool ReadWeaponDataFromFileForSlotKV( KeyValues *pKV, const char *szWeaponName, 
 {
 	if(get_weapon_script->GetFunctionCount() > 0) {
 		get_weapon_script->PushCell(last_weapon ? gamehelpers->EntityToBCompatRef(last_weapon) : -1);
-		get_weapon_script->PushString(szWeaponName);
+		get_weapon_script->PushStringEx((char *)szWeaponName, strlen(szWeaponName)+1, SM_PARAM_STRING_COPY|SM_PARAM_STRING_UTF8, 0);
 		get_weapon_script->PushStringEx(last_script, sizeof(last_script), SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
 		get_weapon_script->PushCell(sizeof(last_script));
 		cell_t res = 0;
@@ -877,7 +877,7 @@ DETOUR_DECL_STATIC4(ReadWeaponDataFromFileForSlot, bool, IFileSystem*, pFilesyst
 {
 	if(get_weapon_script->GetFunctionCount() > 0) {
 		get_weapon_script->PushCell(last_weapon ? gamehelpers->EntityToBCompatRef(last_weapon) : -1);
-		get_weapon_script->PushString(szWeaponName);
+		get_weapon_script->PushStringEx((char *)szWeaponName, strlen(szWeaponName)+1, SM_PARAM_STRING_COPY|SM_PARAM_STRING_UTF8, 0);
 		get_weapon_script->PushStringEx(last_script, sizeof(last_script), SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
 		get_weapon_script->PushCell(sizeof(last_script));
 		cell_t res = 0;
@@ -1257,7 +1257,7 @@ DETOUR_DECL_STATIC2(TranslateWeaponEntForClass, const char *, const char *, pszN
 		translate_weapon_classname->PushCell(last_client ? gamehelpers->EntityToBCompatRef(last_client) : -1);
 		translate_weapon_classname->PushCell(iClass);
 		translate_weapon_classname->PushCell(last_weapon ? gamehelpers->EntityToBCompatRef(last_weapon) : -1);
-		translate_weapon_classname->PushString(pszName);
+		translate_weapon_classname->PushStringEx((char *)pszName, strlen(pszName)+1, SM_PARAM_STRING_COPY|SM_PARAM_STRING_UTF8, 0);
 		translate_weapon_classname->PushStringEx(last_classname, sizeof(last_classname), SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
 		translate_weapon_classname->PushCell(sizeof(last_classname));
 		cell_t res = 0;
