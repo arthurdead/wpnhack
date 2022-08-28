@@ -6,6 +6,8 @@
 #include <sdkhooks>
 #include <tf2>
 #include <tf2_stocks>
+#tryinclude <datamaps>
+#tryinclude <tf2items>
 
 #if 0
 typeset wpnhack_weapon_callbacks
@@ -625,8 +627,6 @@ native bool uncache_weapon_file(const char[] name);
 native bool precache_weapon_file(const char[] name, bool force);
 native bool precache_weapon_kv(KeyValues kv, const char[] name, bool force);
 
-#tryinclude <datamaps>
-
 #if defined datamaps_included
 stock CustomDatamap register_weapon(const char[] classname, const char[] name, WeaponInfo info, const char[] based, const char[] clientnet = NULL_STRING)
 {
@@ -686,6 +686,11 @@ native int get_ammo_index(const char[] name);
 
 native Handle add_ammo_type(const char[] name, int dmg_type, AmmoTracer_t tracer, int plr_dmg, int npc_dmg, int carry, float phys_impulse, AmmoFlags_t flags, int min_splash = 4, int max_splash = 8);
 native Handle add_ammo_type_cvar(const char[] name, int dmg_type, AmmoTracer_t tracer, const char[] plr_dmg_cvar, const char[] npc_dmg_cvar, const char[] carry_cvar, float phys_impulse, AmmoFlags_t flags, int min_splash = 4, int max_splash = 8);
+
+native int give_weapon(int entity, const char[] classname, int subtype = 0);
+#if defined _tf2items_included
+native int give_weapon_econ(int entity, Handle item, int subtype = 0);
+#endif
 
 enum FireBulletsFlags_t
 {

@@ -37,6 +37,10 @@
 using namespace std::literals::string_literals;
 using namespace std::literals::string_view_literals;
 
+#ifndef FMTFUNCTION
+#define FMTFUNCTION(...)
+#endif
+
 #include "extension.h"
 #include <tier1/utldict.h>
 #include <ISDKTools.h>
@@ -46,6 +50,15 @@ using namespace std::literals::string_view_literals;
 #include <CDetour/detours.h>
 #include <ISDKHooks.h>
 #include <shareddefs.h>
+#include <toolframework/itoolentity.h>
+#include <ehandle.h>
+using EHANDLE = CHandle<CBaseEntity>;
+#include <util.h>
+#include <ServerNetworkProperty.h>
+#define DECLARE_PREDICTABLE()
+#include <collisionproperty.h>
+
+#define	SF_NORESPAWN	( 1 << 30 )
 
 /**
  * @file extension.cpp
@@ -57,6 +70,11 @@ Sample g_Sample;		/**< Global singleton for extension's main interface */
 SMEXT_LINK(&g_Sample);
 
 static ISDKHooks *g_pSDKHooks{nullptr};
+
+CBaseEntityList *g_pEntityList = nullptr;
+CGlobalVars *gpGlobals = nullptr;
+IServerTools *servertools = nullptr;
+IEntityFactoryDictionary *dictionary{nullptr};
 
 typedef unsigned short WEAPON_FILE_INFO_HANDLE;
 
@@ -1073,16 +1091,519 @@ int CBaseEntityFireBullets = -1;
 
 struct FireBulletsInfo_t;
 
+int m_iEFlagsOffset = -1;
+int m_vecOriginOffset = -1;
+int m_flSimulationTimeOffset = -1;
+
+float k_flMaxEntityPosCoord = MAX_COORD_FLOAT;
+
+enum InvalidatePhysicsBits_t
+{
+	POSITION_CHANGED	= 0x1,
+	ANGLES_CHANGED		= 0x2,
+	VELOCITY_CHANGED	= 0x4,
+	ANIMATION_CHANGED	= 0x8,
+};
+
+inline bool IsEntityPositionReasonable( const Vector &v )
+{
+	float r = k_flMaxEntityPosCoord;
+	return
+		v.x > -r && v.x < r &&
+		v.y > -r && v.y < r &&
+		v.z > -r && v.z < r;
+}
+
+void SetEdictStateChanged(CBaseEntity *pEntity, int offset);
+
+int m_hMoveChildOffset = -1;
+int m_hMoveParentOffset = -1;
+int m_hMovePeerOffset = -1;
+int m_iParentAttachmentOffset = -1;
+int m_vecAbsOriginOffset = -1;
+int m_spawnflagsOffset = -1;
+int m_iClassnameOffset = -1;
+int CBaseEntityTouch = -1;
+
+void *CBaseEntityCalcAbsolutePosition{nullptr};
+
+class CBasePlayer;
+
 class CBaseEntity : public IServerEntity
 {
 public:
+	int entindex()
+	{
+		return gamehelpers->EntityToBCompatRef(this);
+	}
+
 	void FireBullets( const FireBulletsInfo_t &info )
 	{
 		call_vfunc<void, CBaseEntity, const FireBulletsInfo_t &>(this, CBaseEntityFireBullets, info);
 	}
+
+	int GetIEFlags()
+	{
+		if(m_iEFlagsOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_iEFlags", &info);
+			m_iEFlagsOffset = info.actual_offset;
+		}
+		
+		return *(int *)((unsigned char *)this + m_iEFlagsOffset);
+	}
+
+	void DispatchUpdateTransmitState()
+	{
+
+	}
+
+	void AddIEFlags(int flags)
+	{
+		if(m_iEFlagsOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_iEFlags", &info);
+			m_iEFlagsOffset = info.actual_offset;
+		}
+
+		*(int *)((unsigned char *)this + m_iEFlagsOffset) |= flags;
+
+		if ( flags & ( EFL_FORCE_CHECK_TRANSMIT | EFL_IN_SKYBOX ) )
+		{
+			DispatchUpdateTransmitState();
+		}
+	}
+
+	void AddSpawnFlags(int flags)
+	{
+		if(m_spawnflagsOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_spawnflags", &info);
+			m_spawnflagsOffset = info.actual_offset;
+		}
+
+		*(int *)((unsigned char *)this + m_spawnflagsOffset) |= flags;
+	}
+
+	bool IsMarkedForDeletion( void ) 
+	{
+		return (GetIEFlags() & EFL_KILLME);
+	}
+
+	void SetSimulationTime(float time)
+	{
+		if(m_flSimulationTimeOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_flSimulationTime", &info);
+			m_flSimulationTimeOffset = info.actual_offset;
+		}
+
+		*(float *)((unsigned char *)this + m_flSimulationTimeOffset) = time;
+		SetEdictStateChanged(this, m_flSimulationTimeOffset);
+	}
+
+	CBaseEntity *FirstMoveChild()
+	{
+		if(m_hMoveChildOffset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_hMoveChild", &info);
+			m_hMoveChildOffset = info.actual_offset;
+		}
+
+		return (*(EHANDLE *)(((unsigned char *)this) + m_hMoveChildOffset)).Get();
+	}
+
+	CBaseEntity *GetMoveParent()
+	{
+		if(m_hMoveParentOffset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_hMoveParent", &info);
+			m_hMoveParentOffset = info.actual_offset;
+		}
+
+		return (*(EHANDLE *)(((unsigned char *)this) + m_hMoveParentOffset)).Get();
+	}
+
+	CBaseEntity *NextMovePeer()
+	{
+		if(m_hMovePeerOffset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_hMovePeer", &info);
+			m_hMovePeerOffset = info.actual_offset;
+		}
+
+		return (*(EHANDLE *)(((unsigned char *)this) + m_hMovePeerOffset)).Get();
+	}
+
+	int GetParentAttachment()
+	{
+		if(m_iParentAttachmentOffset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_iParentAttachment", &info);
+			m_iParentAttachmentOffset = info.actual_offset;
+		}
+
+		return *(unsigned char *)(((unsigned char *)this) + m_iParentAttachmentOffset);
+	}
+
+	CCollisionProperty		*CollisionProp() { return (CCollisionProperty		*)GetCollideable(); }
+	const CCollisionProperty*CollisionProp() const { return (const CCollisionProperty*)const_cast<CBaseEntity *>(this)->GetCollideable(); }
+
+	CServerNetworkProperty *NetworkProp() { return (CServerNetworkProperty *)GetNetworkable(); }
+	const CServerNetworkProperty *NetworkProp() const { return (const CServerNetworkProperty *)const_cast<CBaseEntity *>(this)->GetNetworkable(); }
+
+	void InvalidatePhysicsRecursive( int nChangeFlags )
+	{
+		// Main entry point for dirty flag setting for the 90% case
+		// 1) If the origin changes, then we have to update abstransform, Shadow projection, PVS, KD-tree, 
+		//    client-leaf system.
+		// 2) If the angles change, then we have to update abstransform, Shadow projection,
+		//    shadow render-to-texture, client-leaf system, and surrounding bounds. 
+		//	  Children have to additionally update absvelocity, KD-tree, and PVS.
+		//	  If the surrounding bounds actually update, when we also need to update the KD-tree and the PVS.
+		// 3) If it's due to attachment, then all children who are attached to an attachment point
+		//    are assumed to have dirty origin + angles.
+
+		// Other stuff:
+		// 1) Marking the surrounding bounds dirty will automatically mark KD tree + PVS dirty.
+		
+		int nDirtyFlags = 0;
+
+		if ( nChangeFlags & VELOCITY_CHANGED )
+		{
+			nDirtyFlags |= EFL_DIRTY_ABSVELOCITY;
+		}
+
+		if ( nChangeFlags & POSITION_CHANGED )
+		{
+			nDirtyFlags |= EFL_DIRTY_ABSTRANSFORM;
+
+	#ifndef CLIENT_DLL
+			NetworkProp()->MarkPVSInformationDirty();
+	#endif
+
+			// NOTE: This will also mark shadow projection + client leaf dirty
+			CollisionProp()->MarkPartitionHandleDirty();
+		}
+
+		// NOTE: This has to be done after velocity + position are changed
+		// because we change the nChangeFlags for the child entities
+		if ( nChangeFlags & ANGLES_CHANGED )
+		{
+			nDirtyFlags |= EFL_DIRTY_ABSTRANSFORM;
+			if ( CollisionProp()->DoesRotationInvalidateSurroundingBox() )
+			{
+				// NOTE: This will handle the KD-tree, surrounding bounds, PVS
+				// render-to-texture shadow, shadow projection, and client leaf dirty
+				CollisionProp()->MarkSurroundingBoundsDirty();
+			}
+			else
+			{
+	#ifdef CLIENT_DLL
+				MarkRenderHandleDirty();
+				g_pClientShadowMgr->AddToDirtyShadowList( this );
+				g_pClientShadowMgr->MarkRenderToTextureShadowDirty( GetShadowHandle() );
+	#endif
+			}
+
+			// This is going to be used for all children: children
+			// have position + velocity changed
+			nChangeFlags |= POSITION_CHANGED | VELOCITY_CHANGED;
+		}
+
+		AddIEFlags( nDirtyFlags );
+
+		// Set flags for children
+		bool bOnlyDueToAttachment = false;
+		if ( nChangeFlags & ANIMATION_CHANGED )
+		{
+	#ifdef CLIENT_DLL
+			g_pClientShadowMgr->MarkRenderToTextureShadowDirty( GetShadowHandle() );
+	#endif
+
+			// Only set this flag if the only thing that changed us was the animation.
+			// If position or something else changed us, then we must tell all children.
+			if ( !( nChangeFlags & (POSITION_CHANGED | VELOCITY_CHANGED | ANGLES_CHANGED) ) )
+			{
+				bOnlyDueToAttachment = true;
+			}
+
+			nChangeFlags = POSITION_CHANGED | ANGLES_CHANGED | VELOCITY_CHANGED;
+		}
+
+		for (CBaseEntity *pChild = FirstMoveChild(); pChild; pChild = pChild->NextMovePeer())
+		{
+			// If this is due to the parent animating, only invalidate children that are parented to an attachment
+			// Entities that are following also access attachments points on parents and must be invalidated.
+			if ( bOnlyDueToAttachment )
+			{
+	#ifdef CLIENT_DLL
+				if ( (pChild->GetParentAttachment() == 0) && !pChild->IsFollowingEntity() )
+					continue;
+	#else
+				if ( pChild->GetParentAttachment() == 0 )
+					continue;
+	#endif
+			}
+			pChild->InvalidatePhysicsRecursive( nChangeFlags );
+		}
+
+		//
+		// This code should really be in here, or the bone cache should not be in world space.
+		// Since the bone transforms are in world space, if we move or rotate the entity, its
+		// bones should be marked invalid.
+		//
+		// As it is, we're near ship, and don't have time to setup a good A/B test of how much
+		// overhead this fix would add. We've also only got one known case where the lack of
+		// this fix is screwing us, and I just fixed it, so I'm leaving this commented out for now.
+		//
+		// Hopefully, we'll put the bone cache in entity space and remove the need for this fix.
+		//
+		//#ifdef CLIENT_DLL
+		//	if ( nChangeFlags & (POSITION_CHANGED | ANGLES_CHANGED | ANIMATION_CHANGED) )
+		//	{
+		//		C_BaseAnimating *pAnim = GetBaseAnimating();
+		//		if ( pAnim )
+		//			pAnim->InvalidateBoneCache();		
+		//	}
+		//#endif
+	}
+
+	void CalcAbsolutePosition()
+	{
+		call_mfunc<void, CBaseEntity>(this, CBaseEntityCalcAbsolutePosition);
+	}
+
+	const Vector &GetLocalOrigin()
+	{
+		if(m_vecOriginOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_vecOrigin", &info);
+			m_vecOriginOffset = info.actual_offset;
+		}
+		
+		return *(Vector *)(((unsigned char *)this) + m_vecOriginOffset);
+	}
+
+	const Vector &GetAbsOrigin()
+	{
+		if(m_vecAbsOriginOffset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_vecAbsOrigin", &info);
+			m_vecAbsOriginOffset = info.actual_offset;
+		}
+		
+		if(GetIEFlags() & EFL_DIRTY_ABSTRANSFORM) {
+			CalcAbsolutePosition();
+		}
+		
+		return *(Vector *)(((unsigned char *)this) + m_vecAbsOriginOffset);
+	}
+
+	void SetLocalOrigin( const Vector& origin )
+	{
+		if(m_vecOriginOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_vecOrigin", &info);
+			m_vecOriginOffset = info.actual_offset;
+		}
+
+		// Safety check against NaN's or really huge numbers
+		if ( !IsEntityPositionReasonable( origin ) )
+		{
+			return;
+		}
+
+	//	if ( !origin.IsValid() )
+	//	{
+	//		AssertMsg( 0, "Bad origin set" );
+	//		return;
+	//	}
+
+		if (*(Vector *)((unsigned char *)this + m_vecOriginOffset) != origin)
+		{
+			InvalidatePhysicsRecursive( POSITION_CHANGED );
+			*(Vector *)((unsigned char *)this + m_vecOriginOffset) = origin;
+			SetEdictStateChanged(this, m_vecOriginOffset);
+			SetSimulationTime( gpGlobals->curtime );
+		}
+	}
+
+	bool ClassMatches( const char *pszClassOrWildcard )
+	{
+		if(m_iClassnameOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_iClassname", &info);
+			m_iClassnameOffset = info.actual_offset;
+		}
+
+		if ( IDENT_STRINGS( *(string_t *)((unsigned char *)this + m_iClassnameOffset), pszClassOrWildcard ) )
+			return true;
+
+		return false;
+	}
+
+	bool ClassMatches( string_t nameStr )
+	{
+		if(m_iClassnameOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_iClassname", &info);
+			m_iClassnameOffset = info.actual_offset;
+		}
+
+		if ( IDENT_STRINGS( *(string_t *)((unsigned char *)this + m_iClassnameOffset), nameStr ) )
+			return true;
+
+		return false;
+	}
+
+	void Touch( CBaseEntity *pOther )
+	{
+		call_vfunc<void, CBaseEntity, CBaseEntity *>(this, CBaseEntityTouch, pOther);
+	}
+
+	CBasePlayer *IsPlayer()
+	{
+		int idx = gamehelpers->EntityToBCompatRef(this);
+		if(idx >= 1 && idx <= playerhelpers->GetNumPlayers()) {
+			return (CBasePlayer *)this;
+		} else {
+			return nullptr;
+		}
+	}
 };
 
-class CTFWeaponBase : public CBaseEntity
+void CCollisionProperty::MarkSurroundingBoundsDirty()
+{
+	GetOuter()->AddIEFlags( EFL_DIRTY_SURROUNDING_COLLISION_BOUNDS );
+	MarkPartitionHandleDirty();
+
+#ifdef CLIENT_DLL
+	g_pClientShadowMgr->MarkRenderToTextureShadowDirty( GetOuter()->GetShadowHandle() );
+#else
+	GetOuter()->NetworkProp()->MarkPVSInformationDirty();
+#endif
+}
+
+void CCollisionProperty::MarkPartitionHandleDirty()
+{
+	// don't bother with the world
+	if ( m_pOuter->entindex() == 0 )
+		return;
+	
+	if ( !(m_pOuter->GetIEFlags() & EFL_DIRTY_SPATIAL_PARTITION) )
+	{
+		m_pOuter->AddIEFlags( EFL_DIRTY_SPATIAL_PARTITION );
+		//s_DirtyKDTree.AddEntity( m_pOuter );
+	}
+
+#ifdef CLIENT_DLL
+	GetOuter()->MarkRenderHandleDirty();
+	g_pClientShadowMgr->AddToDirtyShadowList( GetOuter() );
+#endif
+}
+
+inline bool FClassnameIs(CBaseEntity *pEntity, const char *szClassname)
+{ 
+	return pEntity->ClassMatches(szClassname); 
+}
+
+void SetEdictStateChanged(CBaseEntity *pEntity, int offset)
+{
+	IServerNetworkable *pNet = pEntity->GetNetworkable();
+	edict_t *edict = pNet->GetEdict();
+	
+	gamehelpers->SetEdictStateChanged(edict, offset);
+}
+
+int CBaseCombatWeaponGetSubType = -1;
+int CBaseCombatWeaponSetSubType = -1;
+
+class CBaseCombatWeapon : public CBaseEntity
+{
+public:
+	int GetSubType( void )
+	{
+		return call_vfunc<int, CBaseCombatWeapon>(this, CBaseCombatWeaponGetSubType);
+	}
+
+	void SetSubType( int iType )
+	{
+		call_vfunc<void, CBaseCombatWeapon, int>(this, CBaseCombatWeaponSetSubType, iType);
+	}
+};
+
+typedef CHandle<CBaseCombatWeapon> CBaseCombatWeaponHandle;
+
+int m_hMyWeaponsOffset = -1;
+int CBaseCombatCharacterWeapon_Equip = -1;
+
+class CBaseCombatCharacter : public CBaseEntity
+{
+public:
+	CBaseCombatWeaponHandle *GetMyWeapons()
+	{
+		if(m_hMyWeaponsOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_hMyWeapons", &info);
+			m_hMyWeaponsOffset = info.actual_offset;
+		}
+		
+		return *(CBaseCombatWeaponHandle **)((unsigned char *)this + m_hMyWeaponsOffset);
+	}
+
+	CBaseCombatWeapon* Weapon_OwnsThisType( const char *pszWeapon, int iSubType )
+	{
+		// Check for duplicates
+		for (int i=0;i<MAX_WEAPONS;i++) 
+		{
+			if ( GetMyWeapons()[i].Get() && FClassnameIs( GetMyWeapons()[i], pszWeapon ) )
+			{
+				// Make sure it matches the subtype
+				if ( GetMyWeapons()[i]->GetSubType() == iSubType )
+					return GetMyWeapons()[i];
+			}
+		}
+		return NULL;
+	}
+
+	void Weapon_Equip( CBaseCombatWeapon *pWeapon )
+	{
+		call_vfunc<void, CBaseCombatCharacter, CBaseCombatWeapon *>(this, CBaseCombatCharacterWeapon_Equip, pWeapon);
+	}
+};
+
+CBaseEntity *CreateEntityByName( const char *szName )
+{
+	return servertools->CreateEntityByName(szName);
+}
+
+int DispatchSpawn( CBaseEntity *pEntity )
+{
+	servertools->DispatchSpawn(pEntity);
+	return 0;
+}
+
+void RemoveEntity( CBaseEntity *pEntity )
+{
+	servertools->RemoveEntity( pEntity );
+}
+
+class CTFWeaponBase : public CBaseCombatWeapon
 {
 };
 
@@ -1257,6 +1778,183 @@ static cell_t BaseEntityFireBullets(IPluginContext *pContext, const cell_t *para
 	return 0;
 }
 
+void GiveNamedItem(CBaseEntity *pItem, CBaseCombatCharacter *pOwner)
+{
+	if(!pItem || pOwner->IsPlayer()) {
+		return;
+	}
+
+	pOwner->Weapon_Equip((CBaseCombatWeapon *)pItem);
+}
+
+CBaseEntity	*GiveNamedItem( CBaseCombatCharacter *pOwner, const char *pszName, int iSubType )
+{
+	// If I already own this type don't create one
+	if ( pOwner->Weapon_OwnsThisType(pszName, iSubType) )
+		return NULL;
+
+	// Msg( "giving %s\n", pszName );
+
+	EHANDLE pent;
+
+	pent = CreateEntityByName(pszName);
+	if ( pent == NULL )
+	{
+		Msg( "NULL Ent in GiveNamedItem!\n" );
+		return NULL;
+	}
+
+	pent->SetLocalOrigin( pOwner->GetLocalOrigin() );
+	pent->AddSpawnFlags( SF_NORESPAWN );
+
+	CBaseCombatWeapon *pWeapon = dynamic_cast<CBaseCombatWeapon*>( (CBaseEntity*)pent );
+	if ( pWeapon )
+	{
+		pWeapon->SetSubType( iSubType );
+	}
+
+	DispatchSpawn( pent );
+
+	if ( pent != NULL && !(pent->IsMarkedForDeletion()) ) 
+	{
+		pent->Touch( pOwner );
+	}
+
+	GiveNamedItem(pent, pOwner);
+
+	return pent;
+}
+
+class CEconItemView;
+
+void *CTFPlayerGiveNamedItemPtr{nullptr};
+
+CBaseEntity	*GenerateItemHack( CBaseCombatCharacter *pOwner, const char *pszName, const CEconItemView *pScriptItem )
+{
+	CBaseEntity *pItem = NULL;
+
+#if 0
+	if ( pScriptItem )
+	{
+		// Generate a weapon directly from that item
+		pItem = ItemGeneration()->GenerateItemFromScriptData( pScriptItem, pOwner->GetLocalOrigin(), vec3_angle, pszName );
+	}
+	else
+	{
+		// Generate a base item of the specified type
+		CItemSelectionCriteria criteria;
+		criteria.SetQuality( AE_NORMAL );
+		criteria.BAddCondition( "name", k_EOperator_String_EQ, pszName, true );
+		pItem = ItemGeneration()->GenerateRandomItem( &criteria, pOwner->GetAbsOrigin(), vec3_angle );
+	}
+#endif
+
+	return pItem;
+}
+
+static bool g_bIgnoreTranslate{false};
+
+CBaseEntity	*GiveNamedItem( CBaseCombatCharacter *pOwner, const char *pszName, int iSubType, const CEconItemView *pScriptItem, bool bForce )
+{
+#if 1
+	g_bIgnoreTranslate = true;
+	CBaseEntity *pItem{call_mfunc<CBaseEntity *, CBaseCombatCharacter, const char *, int, const CEconItemView *, bool>(pOwner, CTFPlayerGiveNamedItemPtr, pszName, iSubType, pScriptItem, bForce)};
+	g_bIgnoreTranslate = false;
+	GiveNamedItem(pItem, pOwner);
+	return pItem;
+#else
+	// We need to support players putting any shotgun into a shotgun slot, pistol into a pistol slot, etc.
+	// For legacy reasons, different classes actually spawn different entities for their shotguns/pistols/etc.
+	// To deal with this, we translate entities into the right one for the class we're playing.
+#if 0
+	if ( !bForce )
+	{
+		// We don't do this if force is set, since a spy might be disguising as this character, etc.
+		pszName = TranslateWeaponEntForClass( pszName, GetPlayerClass()->GetClassIndex() );
+	}
+#endif
+
+	if ( !pszName )
+		return NULL;
+
+	// If I already own this type don't create one
+	if ( pOwner->Weapon_OwnsThisType(pszName, iSubType) && !bForce)
+	{
+		Assert(0);
+		return NULL;
+	}
+
+	CBaseEntity *pItem = NULL;
+
+	pItem = GenerateItemHack( pOwner, pszName, pScriptItem );
+
+	if ( pItem == NULL )
+	{
+		Msg( "Failed to generate base item: %s\n", pszName );
+		return NULL;
+	}
+
+	pItem->AddSpawnFlags( SF_NORESPAWN );
+
+	CBaseCombatWeapon *pWeapon = dynamic_cast<CBaseCombatWeapon*>( (CBaseEntity*)pItem );
+	if ( pWeapon )
+	{
+		pWeapon->SetSubType( iSubType );
+	}
+
+	DispatchSpawn( pItem );
+
+	if ( pItem != NULL && !(pItem->IsMarkedForDeletion()) ) 
+	{
+		pItem->Touch( pOwner );
+	}
+
+	GiveNamedItem(pItem, pOwner);
+
+	return pItem;
+#endif
+}
+
+static cell_t give_weapon(IPluginContext *pContext, const cell_t *params)
+{
+	CBaseEntity *pEntity = (CBaseEntity *)gamehelpers->ReferenceToEntity(params[1]);
+	if(!pEntity) {
+		return pContext->ThrowNativeError("Invalid Entity Reference/Index %i", params[1]);
+	}
+
+	char *pszName{nullptr};
+	pContext->LocalToString(params[2], &pszName);
+
+	CBaseEntity *pItem{GiveNamedItem((CBaseCombatCharacter *)pEntity, pszName, params[3])};
+
+	return pItem ? gamehelpers->EntityToBCompatRef(pItem) : -1;
+}
+
+#include "tf2items.hpp"
+
+static cell_t give_weapon_econ(IPluginContext *pContext, const cell_t *params)
+{
+	CBaseEntity *pEntity = (CBaseEntity *)gamehelpers->ReferenceToEntity(params[1]);
+	if(!pEntity) {
+		return pContext->ThrowNativeError("Invalid Entity Reference/Index %i", params[1]);
+	}
+
+	TScriptedItemOverride *pScriptedItemOverride = GetScriptedItemOverrideFromHandle(params[2], pContext);
+	if (pScriptedItemOverride == NULL)
+	{
+		return -1;
+	}
+
+	bool bForce{false};
+
+	CEconItemView hScriptCreatedItem;
+	const char *strWeaponClassname{init_tf2items_itemview(hScriptCreatedItem, pScriptedItemOverride, bForce)};
+
+	CBaseEntity *pItem{GiveNamedItem((CBaseCombatCharacter *)pEntity, strWeaponClassname, params[3], &hScriptCreatedItem, bForce)};
+
+	return pItem ? gamehelpers->EntityToBCompatRef(pItem) : -1;
+}
+
 sp_nativeinfo_t natives[] =
 {
 	//{"set_weapon_function", set_weapon_function},
@@ -1270,6 +1968,8 @@ sp_nativeinfo_t natives[] =
 	{"add_ammo_type", add_ammo_type},
 	{"add_ammo_type_cvar", add_ammo_type_cvar},
 	{"FireBullets", BaseEntityFireBullets},
+	{"give_weapon", give_weapon},
+	{"give_weapon_econ", give_weapon_econ},
 	{NULL, NULL}
 };
 
@@ -1280,6 +1980,10 @@ IForward *translate_weapon_classname = nullptr;
 static char last_classname[64];
 DETOUR_DECL_STATIC2(TranslateWeaponEntForClass, const char *, const char *, pszName, int, iClass)
 {
+	if(g_bIgnoreTranslate) {
+		return pszName;
+	}
+
 	if(translate_weapon_classname->GetFunctionCount() > 0) {
 		translate_weapon_classname->PushCell(last_client ? gamehelpers->EntityToBCompatRef(last_client) : -1);
 		translate_weapon_classname->PushCell(iClass);
@@ -1325,6 +2029,7 @@ DETOUR_DECL_MEMBER4(CTFPlayerItemsMatch, bool, TFPlayerClassData_t *, pData, CEc
 
 DETOUR_DECL_MEMBER4(CTFPlayerGiveNamedItem, CBaseEntity *, const char *, pszName, int, iSubType, const CEconItemView *, pScriptItem, bool, bForce)
 {
+	init_tf2items_vtables(pScriptItem);
 	last_client = (CBaseEntity *)this;
 	CBaseEntity *ret = DETOUR_MEMBER_CALL(CTFPlayerGiveNamedItem)(pszName, iSubType, pScriptItem, bForce);
 	last_client = nullptr;
@@ -1474,6 +2179,20 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	g_pGameConf->GetOffset("CGameRules::GetSkillLevel", &CGameRulesGetSkillLevel);
 
 	g_pGameConf->GetOffset("CBaseEntity::FireBullets", &CBaseEntityFireBullets);
+	g_pGameConf->GetOffset("CBaseEntity::Touch", &CBaseEntityTouch);
+
+	g_pGameConf->GetMemSig("CBaseEntity::CalcAbsolutePosition", &CBaseEntityCalcAbsolutePosition);
+
+	g_pGameConf->GetMemSig("CTFPlayer::GiveNamedItem", &CTFPlayerGiveNamedItemPtr);
+
+	g_pGameConf->GetOffset("CBaseCombatCharacter::Weapon_Equip", &CBaseCombatCharacterWeapon_Equip);
+
+	g_pGameConf->GetOffset("CBaseCombatWeapon::GetSubType", &CBaseCombatWeaponGetSubType);
+	g_pGameConf->GetOffset("CBaseCombatWeapon::SetSubType", &CBaseCombatWeaponSetSubType);
+
+	dictionary = servertools->GetEntityFactoryDictionary();
+
+	g_pEntityList = reinterpret_cast<CBaseEntityList *>(gamehelpers->GetGlobalEntityList());
 
 	int tmp_off;
 
@@ -1538,6 +2257,8 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 		def->m_AmmoType[i].pNPCDmg = USE_CVAR;
 	}
 
+	init_tf2items_handles();
+
 	return true;
 }
 
@@ -1582,8 +2303,10 @@ bool Sample::RegisterConCommandBase(ConCommandBase *pCommand)
 
 bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool late)
 {
+	gpGlobals = ismm->GetCGlobals();
 	GET_V_IFACE_CURRENT(GetEngineFactory, cvar, ICvar, CVAR_INTERFACE_VERSION);
 	GET_V_IFACE_CURRENT(GetEngineFactory, filesystem, IFileSystem, FILESYSTEM_INTERFACE_VERSION);
+	GET_V_IFACE_CURRENT(GetServerFactory, servertools, IServerTools, VSERVERTOOLS_INTERFACE_VERSION);
 	g_pCVar = cvar;
 	ConVar_Register(0, this);
 	return true;

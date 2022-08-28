@@ -99,6 +99,11 @@
 				"library" "server"
 				"linux" "@_Z11GetAmmoNamei"
 			}
+			"CBaseEntity::CalcAbsolutePosition"
+			{
+				"library" "server"
+				"linux" "@_ZN11CBaseEntity20CalcAbsolutePositionEv"
+			}
 		}
 		"Offsets"
 		{
@@ -125,6 +130,22 @@
 			"CBaseEntity::FireBullets"
 			{
 				"linux" "116"
+			}
+			"CBaseCombatWeapon::GetSubType"
+			{
+				"linux" "234"
+			}
+			"CBaseCombatWeapon::SetSubType"
+			{
+				"linux" "235"
+			}
+			"CBaseEntity::Touch"
+			{
+				"linux" "103"
+			}
+			"CBaseCombatCharacter::Weapon_Equip"
+			{
+				"linux" "269"
 			}
 		}
 	}

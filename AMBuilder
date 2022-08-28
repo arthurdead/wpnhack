@@ -22,6 +22,8 @@ sourceFiles = [
 
 project = Extension.HL2Project(builder, projectName + '.ext')
 
+project.compiler.cxxincludes += [Extension.sm_root]
+
 if os.path.isfile(os.path.join(builder.currentSourcePath, 'sdk', 'smsdk_ext.cpp')):
   # Use the copy included in the project
   project.sources += [os.path.join('sdk', 'smsdk_ext.cpp')]
@@ -35,5 +37,7 @@ for sdk_name in Extension.sdks:
   sdk = Extension.sdks[sdk_name]
   
   binary = Extension.HL2Config(project, projectName + '.ext.' + sdk.ext, sdk)
+
+  binary.compiler.cxxincludes += [os.path.join(sdk.path, 'game/shared'),os.path.join(sdk.path, 'game/server')]
 
 Extension.extensions = builder.Add(project)
