@@ -104,6 +104,11 @@
 				"library" "server"
 				"linux" "@_ZN11CBaseEntity20CalcAbsolutePositionEv"
 			}
+			"GuessDamageForce"
+			{
+				"library" "server"
+				"linux" "@_Z16GuessDamageForceP15CTakeDamageInfoRK6VectorS3_f"
+			}
 		}
 		"Offsets"
 		{

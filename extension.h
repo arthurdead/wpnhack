@@ -51,6 +51,8 @@ public:
 	virtual int PlrDamage(int nAmmoIndex);
 	virtual int NPCDamage(int nAmmoIndex);
 	virtual int DamageType(int nAmmoIndex);
+	virtual float DamageForce(int nAmmoIndex);
+	virtual int Index(const char *name);
 	virtual IAmmoDef *AmmoDef() { return this; }
 
 	virtual void OnPluginUnloaded(IPlugin *plugin) noexcept override final;

@@ -14,6 +14,8 @@ public:
 	virtual int PlrDamage(int nAmmoIndex) = 0;
 	virtual int NPCDamage(int nAmmoIndex) = 0;
 	virtual int DamageType(int nAmmoIndex) = 0;
+	virtual float DamageForce(int nAmmoIndex) = 0;
+	virtual int Index(const char *name) = 0;
 };
 
 class IWpnHack : public SourceMod::SMInterface

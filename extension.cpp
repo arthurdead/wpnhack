@@ -57,6 +57,7 @@ using EHANDLE = CHandle<CBaseEntity>;
 #include <ServerNetworkProperty.h>
 #define DECLARE_PREDICTABLE()
 #include <collisionproperty.h>
+#include <takedamageinfo.h>
 
 #define	SF_NORESPAWN	( 1 << 30 )
 
@@ -387,16 +388,33 @@ struct CAmmoDef
 
 		return m_AmmoType[nAmmoIndex].nDamageType;
 	}
+
+	float DamageForce(int nAmmoIndex)
+	{
+		if ( nAmmoIndex < 1 || nAmmoIndex >= m_nAmmoIndex )
+			return 0;
+
+		return m_AmmoType[nAmmoIndex].physicsForceImpulse;
+	}
 };
 
 void *GetAmmoDefAddr;
 
+CAmmoDef *GetAmmoDef()
+{
+	return (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))();
+}
+
 int Sample::PlrDamage(int nAmmoIndex)
-{ return (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))()->PlrDamage(nAmmoIndex); }
+{ return GetAmmoDef()->PlrDamage(nAmmoIndex); }
 int Sample::NPCDamage(int nAmmoIndex)
-{ return (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))()->NPCDamage(nAmmoIndex); }
+{ return GetAmmoDef()->NPCDamage(nAmmoIndex); }
 int Sample::DamageType(int nAmmoIndex)
-{ return (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))()->DamageType(nAmmoIndex); }
+{ return GetAmmoDef()->DamageType(nAmmoIndex); }
+int Sample::Index(const char *name)
+{ return GetAmmoDef()->Index(name); }
+float Sample::DamageForce(int nAmmoIndex)
+{ return GetAmmoDef()->DamageForce(nAmmoIndex); }
 
 void *m_WeaponInfoDatabaseAddr;
 
@@ -997,7 +1015,7 @@ cell_t get_ammo_index(IPluginContext *pContext, const cell_t *params)
 	char *name = nullptr;
 	pContext->LocalToString(params[1], &name);
 
-	return (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))()->Index(name);
+	return GetAmmoDef()->Index(name);
 }
 
 struct ammo_handle_obj
@@ -1028,7 +1046,7 @@ cell_t add_ammo_type(IPluginContext *pContext, const cell_t *params)
 	char *name = nullptr;
 	pContext->LocalToString(params[1], &name);
 
-	CAmmoDef *def = (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))();
+	CAmmoDef *def = GetAmmoDef();
 
 	if(def->Index(name) != -1) {
 		return pContext->ThrowNativeError("ammo %s already registered", name);
@@ -1047,7 +1065,7 @@ cell_t add_ammo_type_cvar(IPluginContext *pContext, const cell_t *params)
 	char *name = nullptr;
 	pContext->LocalToString(params[1], &name);
 
-	CAmmoDef *def = (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))();
+	CAmmoDef *def = GetAmmoDef();
 
 	if(def->Index(name) != -1) {
 		return pContext->ThrowNativeError("ammo %s already registered", name);
@@ -1077,7 +1095,7 @@ cell_t get_max_ammo_count(IPluginContext *pContext, const cell_t *params)
 
 cell_t get_ammo_count(IPluginContext *pContext, const cell_t *params)
 {
-	CAmmoDef *def = (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))();
+	CAmmoDef *def = GetAmmoDef();
 
 	return def->m_nAmmoIndex;
 }
@@ -2151,14 +2169,92 @@ struct ammo_dmg_cvar_t
 };
 
 static ammo_dmg_cvar_t tf_ammo_dmg_cvars[TF_AMMO_COUNT]{
-	{new ConVar{"sk_plr_dmg_dummy", "0"}, new ConVar{"sk_npc_dmg_dummy", "0"}},
-	{new ConVar{"sk_plr_dmg_primary", "6"}, new ConVar{"sk_npc_dmg_primary", "6"}},
-	{new ConVar{"sk_plr_dmg_secondary", "15"}, new ConVar{"sk_npc_dmg_secondary", "15"}},
-	{new ConVar{"sk_plr_dmg_metal", "0"}, new ConVar{"sk_npc_dmg_metal", "0"}},
-	{new ConVar{"sk_plr_dmg_grenade1", "120"}, new ConVar{"sk_npc_dmg_grenade1", "120"}},
-	{new ConVar{"sk_plr_dmg_grenade2", "120"}, new ConVar{"sk_npc_dmg_grenade2", "120"}},
-	{new ConVar{"sk_plr_dmg_grenade3", "120"}, new ConVar{"sk_npc_dmg_grenade3", "120"}},
+	{new ConVar{"tf_plr_dmg_dummy", "0"}, new ConVar{"tf_npc_dmg_dummy", "0"}},
+	{new ConVar{"tf_plr_dmg_primary", "6"}, new ConVar{"tf_npc_dmg_primary", "6"}},
+	{new ConVar{"tf_plr_dmg_secondary", "15"}, new ConVar{"tf_npc_dmg_secondary", "15"}},
+	{new ConVar{"tf_plr_dmg_metal", "0"}, new ConVar{"tf_npc_dmg_metal", "0"}},
+	{new ConVar{"tf_plr_dmg_grenade1", "120"}, new ConVar{"tf_npc_dmg_grenade1", "120"}},
+	{new ConVar{"tf_plr_dmg_grenade2", "120"}, new ConVar{"tf_npc_dmg_grenade2", "120"}},
+	{new ConVar{"tf_plr_dmg_grenade3", "120"}, new ConVar{"tf_npc_dmg_grenade3", "120"}},
 };
+
+CDetour *GuessDamageForceDetour{nullptr};
+
+float ImpulseScale( float flTargetMass, float flDesiredSpeed )
+{
+	return (flTargetMass * flDesiredSpeed);
+}
+
+static ConVar *phys_pushscale{nullptr};
+
+void CalculateExplosiveDamageForce( CTakeDamageInfo *info, const Vector &vecDir, const Vector &vecForceOrigin, float flScale )
+{
+	info->SetDamagePosition( vecForceOrigin );
+
+	float flClampForce = ImpulseScale( 75, 400 );
+
+	// Calculate an impulse large enough to push a 75kg man 4 in/sec per point of damage
+	float flForceScale = info->GetBaseDamage() * ImpulseScale( 75, 4 );
+
+	if( flForceScale > flClampForce )
+		flForceScale = flClampForce;
+
+	// Fudge blast forces a little bit, so that each
+	// victim gets a slightly different trajectory. 
+	// This simulates features that usually vary from
+	// person-to-person variables such as bodyweight,
+	// which are all indentical for characters using the same model.
+	flForceScale *= random->RandomFloat( 0.85, 1.15 );
+
+	// Calculate the vector and stuff it into the takedamageinfo
+	Vector vecForce = vecDir;
+	VectorNormalize( vecForce );
+	vecForce *= flForceScale;
+	vecForce *= phys_pushscale->GetFloat();
+	vecForce *= flScale;
+	info->SetDamageForce( vecForce );
+}
+
+void CalculateBulletDamageForce( CTakeDamageInfo *info, int iBulletType, const Vector &vecBulletDir, const Vector &vecForceOrigin, float flScale )
+{
+	info->SetDamagePosition( vecForceOrigin );
+	Vector vecForce = vecBulletDir;
+	VectorNormalize( vecForce );
+	vecForce *= GetAmmoDef()->DamageForce( iBulletType );
+	vecForce *= phys_pushscale->GetFloat();
+	vecForce *= flScale;
+	info->SetDamageForce( vecForce );
+}
+
+void CalculateMeleeDamageForce( CTakeDamageInfo *info, const Vector &vecMeleeDir, const Vector &vecForceOrigin, float flScale )
+{
+	info->SetDamagePosition( vecForceOrigin );
+
+	// Calculate an impulse large enough to push a 75kg man 4 in/sec per point of damage
+	float flForceScale = info->GetBaseDamage() * ImpulseScale( 75, 4 );
+	Vector vecForce = vecMeleeDir;
+	VectorNormalize( vecForce );
+	vecForce *= flForceScale;
+	vecForce *= phys_pushscale->GetFloat();
+	vecForce *= flScale;
+	info->SetDamageForce( vecForce );
+}
+
+DETOUR_DECL_STATIC4(GuessDamageForce, void, CTakeDamageInfo *,info, const Vector &,vecForceDir, const Vector &,vecForceOrigin, float,flScale)
+{
+	if ( info->GetDamageType() & DMG_BULLET )
+	{
+		CalculateBulletDamageForce( info, GetAmmoDef()->Index("TF_AMMO_PRIMARY"), vecForceDir, vecForceOrigin, flScale );
+	}
+	else if ( info->GetDamageType() & DMG_BLAST )
+	{
+		CalculateExplosiveDamageForce( info, vecForceDir, vecForceOrigin, flScale );
+	}
+	else
+	{
+		CalculateMeleeDamageForce( info, vecForceDir, vecForceOrigin, flScale );
+	}
+}
 
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
@@ -2198,6 +2294,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	TranslateWeaponEntForClassDetour = DETOUR_CREATE_STATIC(TranslateWeaponEntForClass, "TranslateWeaponEntForClass")
 	TranslateWeaponEntForClassDetour->EnableDetour();
+
+	GuessDamageForceDetour = DETOUR_CREATE_STATIC(GuessDamageForce, "GuessDamageForce")
+	GuessDamageForceDetour->EnableDetour();
 
 	ReadWeaponDataFromFileForSlotDetour = DETOUR_CREATE_STATIC(ReadWeaponDataFromFileForSlot, "ReadWeaponDataFromFileForSlot")
 	ReadWeaponDataFromFileForSlotDetour->EnableDetour();
@@ -2248,7 +2347,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	sharesys->AddNatives(myself, natives);
 
-	CAmmoDef *def = (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))();
+	CAmmoDef *def = GetAmmoDef();
 
 	for ( int i=1; i < TF_AMMO_COUNT; i++ ) {
 		def->m_AmmoType[i].pPlrDmgCVar = tf_ammo_dmg_cvars[i].plr_dmg;
@@ -2301,14 +2400,20 @@ bool Sample::RegisterConCommandBase(ConCommandBase *pCommand)
 	return true;
 }
 
+IUniformRandomStream *random{nullptr};
+
 bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool late)
 {
 	gpGlobals = ismm->GetCGlobals();
 	GET_V_IFACE_CURRENT(GetEngineFactory, cvar, ICvar, CVAR_INTERFACE_VERSION);
 	GET_V_IFACE_CURRENT(GetEngineFactory, filesystem, IFileSystem, FILESYSTEM_INTERFACE_VERSION);
 	GET_V_IFACE_CURRENT(GetServerFactory, servertools, IServerTools, VSERVERTOOLS_INTERFACE_VERSION);
+	GET_V_IFACE_ANY(GetEngineFactory, random, IUniformRandomStream, VENGINE_SERVER_RANDOM_INTERFACE_VERSION)
 	g_pCVar = cvar;
 	ConVar_Register(0, this);
+
+	phys_pushscale = g_pCVar->FindVar("phys_pushscale");
+
 	return true;
 }
 
@@ -2317,7 +2422,7 @@ void Sample::OnHandleDestroy(HandleType_t type, void *object)
 	if(type == ammo_handle) {
 		ammo_handle_obj *obj = (ammo_handle_obj *)object;
 
-		CAmmoDef *def = (void_to_func<CAmmoDef *(*)()>(GetAmmoDefAddr))();
+		CAmmoDef *def = GetAmmoDef();
 
 		for(int i = obj->index; i < def->m_nAmmoIndex-1; ++i) {
 			def->m_AmmoType[i] = std::move(def->m_AmmoType[i+1]);
