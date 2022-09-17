@@ -2388,6 +2388,8 @@ void Sample::SDK_OnUnload()
 	CTFWeaponBaseGunGetProjectileGravityDetour->Destroy();
 	CTFWeaponBaseGunGetProjectileSpreadDetour->Destroy();
 
+	GuessDamageForceDetour->Destroy();
+
 	plsys->RemovePluginsListener(this);
 	g_pSDKHooks->RemoveEntityListener(this);
 
