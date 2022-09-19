@@ -38,6 +38,10 @@ CopyFiles('sourcemod/gamedata', 'addons/sourcemod/gamedata',
   [ 'wpnhack.txt' ]
 )
 
+CopyFiles('sourcemod/extensions', 'addons/sourcemod/extensions',
+  [ 'wpnhack.autoload']
+)
+
 # Config Files
 #CopyFiles('configs', 'addons/sourcemod/configs',
 #  [ 'configfile.cfg',
