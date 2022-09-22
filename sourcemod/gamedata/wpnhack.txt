@@ -109,6 +109,11 @@
 				"library" "server"
 				"linux" "@_Z16GuessDamageForceP15CTakeDamageInfoRK6VectorS3_f"
 			}
+			"KeyValues::LoadFromFile"
+			{
+				"library" "server"
+				"linux" "@_ZN9KeyValues12LoadFromFileEP15IBaseFileSystemPKcS3_b"
+			}
 		}
 		"Offsets"
 		{

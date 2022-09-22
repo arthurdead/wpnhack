@@ -909,6 +909,8 @@ bool ReadWeaponDataFromFileForSlotKV( KeyValues *pKV, const char *szWeaponName, 
 	return true;
 }
 
+static bool g_bInWeaponsParse{false};
+
 DETOUR_DECL_STATIC4(ReadWeaponDataFromFileForSlot, bool, IFileSystem*, pFilesystem, const char *, szWeaponName, WEAPON_FILE_INFO_HANDLE *, phandle, const unsigned char *, pICEKey)
 {
 	if(get_weapon_script->GetFunctionCount() > 0) {
@@ -947,7 +949,11 @@ DETOUR_DECL_STATIC4(ReadWeaponDataFromFileForSlot, bool, IFileSystem*, pFilesyst
 		new (&pFileInfo) GAME_WEP_INFO{};
 	}
 
-	return DETOUR_STATIC_CALL(ReadWeaponDataFromFileForSlot)(pFilesystem, szWeaponName, phandle, pICEKey);
+	g_bInWeaponsParse = true;
+	bool ret = DETOUR_STATIC_CALL(ReadWeaponDataFromFileForSlot)(pFilesystem, szWeaponName, phandle, pICEKey);
+	g_bInWeaponsParse = false;
+
+	return ret;
 }
 
 cell_t precache_weapon_file(IPluginContext *pContext, const cell_t *params)
@@ -2256,8 +2262,37 @@ DETOUR_DECL_STATIC4(GuessDamageForce, void, CTakeDamageInfo *,info, const Vector
 	}
 }
 
+CDetour *pKeyValuesLoadFromFile{nullptr};
+
+DETOUR_DECL_MEMBER4(KeyValuesLoadFromFile, bool, IBaseFileSystem *,filesystem, const char *,resourceName, const char *,pathID, bool, refreshCache)
+{
+	if(g_bInWeaponsParse) {
+		pathID = "WEAPONS";
+	}
+	bool ret{DETOUR_MEMBER_CALL(KeyValuesLoadFromFile)(filesystem, resourceName, pathID, refreshCache)};
+	if(!ret) {
+		if(g_bInWeaponsParse) {
+			pathID = "custom_mod";
+			ret = DETOUR_MEMBER_CALL(KeyValuesLoadFromFile)(filesystem, resourceName, pathID, refreshCache);
+		}
+	}
+	return ret;
+}
+
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
+	char pPath[MAX_PATH];
+	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "data/weapons");
+	filesystem->AddSearchPath( pPath, "WEAPONS" );
+	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "configs/weapons");
+	filesystem->AddSearchPath( pPath, "WEAPONS" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts");
+	filesystem->AddSearchPath( pPath, "WEAPONS" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, nullptr);
+	filesystem->AddSearchPath( pPath, "WEAPONS" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "tf2_misc_dir.vpk");
+	filesystem->AddSearchPath( pPath, "WEAPONS" );
+
 	gameconfs->LoadGameConfigFile("wpnhack", &g_pGameConf, nullptr, 0);
 
 	CDetourManager::Init(g_pSM->GetScriptingEngine(), g_pGameConf);
@@ -2285,6 +2320,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	g_pGameConf->GetOffset("CBaseCombatWeapon::GetSubType", &CBaseCombatWeaponGetSubType);
 	g_pGameConf->GetOffset("CBaseCombatWeapon::SetSubType", &CBaseCombatWeaponSetSubType);
+
+	pKeyValuesLoadFromFile = DETOUR_CREATE_MEMBER(KeyValuesLoadFromFile, "KeyValues::LoadFromFile")
+	pKeyValuesLoadFromFile->EnableDetour();
 
 	dictionary = servertools->GetEntityFactoryDictionary();
 
@@ -2389,6 +2427,8 @@ void Sample::SDK_OnUnload()
 	CTFWeaponBaseGunGetProjectileSpreadDetour->Destroy();
 
 	GuessDamageForceDetour->Destroy();
+
+	pKeyValuesLoadFromFile->Destroy();
 
 	plsys->RemovePluginsListener(this);
 	g_pSDKHooks->RemoveEntityListener(this);
