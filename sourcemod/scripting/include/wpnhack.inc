@@ -3,6 +3,12 @@
 #endif
 #define __wpnhack_included
 
+#if defined GAME_L4D2
+	#error L4D2 is not supported
+#elseif !defined GAME_TF2
+	#error please define GAME_TF2
+#endif
+
 #include <sdkhooks>
 #include <tf2>
 #include <tf2_stocks>
