@@ -114,6 +114,16 @@
 				"library" "server"
 				"linux" "@_ZN9KeyValues12LoadFromFileEP15IBaseFileSystemPKcS3_b"
 			}
+			"UTIL_Tracer"
+			{
+				"library" "server"
+				"linux" "@_Z11UTIL_TracerRK6VectorS1_iifbPKci"
+			}
+			"UTIL_ParticleTracer"
+			{
+				"library" "server"
+				"linux" "@_Z19UTIL_ParticleTracerPKcRK6VectorS3_iib"
+			}
 		}
 		"Offsets"
 		{
@@ -156,6 +166,22 @@
 			"CBaseCombatCharacter::Weapon_Equip"
 			{
 				"linux" "269"
+			}
+			"CBaseEntity::GetTracerAttachment"
+			{
+				"linux" "115"
+			}
+			"CBaseEntity::MakeTracer"
+			{
+				"linux" "114"
+			}
+			"CBaseEntity::GetTracerType"
+			{
+				"linux" "22"
+			}
+			"CGameRules::IsMultiplayer"
+			{
+				"linux" "35"
 			}
 		}
 	}

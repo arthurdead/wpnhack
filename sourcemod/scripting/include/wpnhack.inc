@@ -657,13 +657,22 @@ stock CustomDatamap register_weapon(const char[] classname, const char[] name, W
 }
 #endif
 
+#define TRACER_DEFAULT_ATTACHMENT -2
+
+#define TRACER_DONT_USE_ATTACHMENT -1
+
 enum AmmoTracer_t
 {
-	TRACER_NONE,
+	TRACER_INVALID = -1,
+
+	TRACER_NONE = 0,
 	TRACER_LINE,
 	TRACER_RAIL,
 	TRACER_BEAM,
 	TRACER_LINE_AND_WHIZ,
+
+	TRACER_PARTICLE,
+	TRACER_PARTICLE_AND_WHIZ,
 };
 
 enum AmmoFlags_t
@@ -711,6 +720,8 @@ enum FireBulletsFlags_t
 #endif
 };
 
+#define MAX_TRACER_NAME 64
+
 enum struct FireBulletsInfo_t
 {
 	int m_iShots;
@@ -735,6 +746,10 @@ enum struct FireBulletsInfo_t
 	bool m_bUseServerRandomSeed;
 #endif
 
+	int attachment;
+	char tracer_name[MAX_TRACER_NAME];
+	AmmoTracer_t forced_tracer_type;
+
 	void Init()
 	{
 		this.m_iShots = 1;
@@ -745,6 +760,10 @@ enum struct FireBulletsInfo_t
 		this.m_pAdditionalIgnoreEnt = -1;
 		this.m_flDamageForceScale = 1.0;
 		this.m_bPrimaryAttack = true;
+
+		this.attachment = TRACER_DEFAULT_ATTACHMENT;
+		this.tracer_name[0] = '\0';
+		this.forced_tracer_type = TRACER_INVALID;
 	}
 }
 

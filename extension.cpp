@@ -1757,7 +1757,34 @@ Vector addr_deref_vec(const cell_t *&addr)
 	return ret;
 }
 
-void AddrToBulletInfo(const cell_t *addr, FireBulletsInfo_t &info)
+enum AmmoTracer_t
+{
+	TRACER_INVALID = -1,
+
+	TRACER_NONE = 0,
+	TRACER_LINE,
+	TRACER_RAIL,
+	TRACER_BEAM,
+	TRACER_LINE_AND_WHIZ,
+
+	//CUSTOM ADDED
+	TRACER_PARTICLE,
+	TRACER_PARTICLE_AND_WHIZ,
+};
+
+#define MAX_TRACER_NAME 64
+#define MAX_TRACER_NAME_IN_CELLS (MAX_TRACER_NAME / sizeof(cell_t))
+
+#define TRACER_DEFAULT_ATTACHMENT -2
+
+struct CustomFireBulletsInfo_t : public FireBulletsInfo_t
+{
+	int attachment{TRACER_DEFAULT_ATTACHMENT};
+	std::string tracer_name{};
+	AmmoTracer_t forced_tracer_type{TRACER_INVALID};
+};
+
+void AddrToBulletInfo(const cell_t *&addr, FireBulletsInfo_t &info)
 {
 	info.m_iShots = *addr;
 	++addr;
@@ -1794,6 +1821,19 @@ void AddrToBulletInfo(const cell_t *addr, FireBulletsInfo_t &info)
 #endif
 }
 
+void AddrToCustomBulletInfo(const cell_t *addr, CustomFireBulletsInfo_t &info)
+{
+	AddrToBulletInfo(static_cast<const cell_t *&>(addr), static_cast<FireBulletsInfo_t &>(info));
+	info.attachment = *addr;
+	++addr;
+	info.tracer_name.assign((const char *)addr, MAX_TRACER_NAME);
+	addr += MAX_TRACER_NAME_IN_CELLS;
+	info.forced_tracer_type = (AmmoTracer_t)*addr;
+	++addr;
+}
+
+static CustomFireBulletsInfo_t *current_custombulletinfo{nullptr};
+
 static cell_t BaseEntityFireBullets(IPluginContext *pContext, const cell_t *params)
 {
 	CBaseEntity *pEntity = (CBaseEntity *)gamehelpers->ReferenceToEntity(params[1]);
@@ -1801,14 +1841,17 @@ static cell_t BaseEntityFireBullets(IPluginContext *pContext, const cell_t *para
 		return pContext->ThrowNativeError("Invalid Entity Reference/Index %i", params[1]);
 	}
 	
-	FireBulletsInfo_t info{};
+	CustomFireBulletsInfo_t info{};
 	
 	cell_t *addr = nullptr;
 	pContext->LocalToPhysAddr(params[2], &addr);
 
-	::AddrToBulletInfo(addr, info);
+	::AddrToCustomBulletInfo(addr, info);
 
+	current_custombulletinfo = &info;
 	pEntity->FireBullets(info);
+	current_custombulletinfo = nullptr;
+
 	return 0;
 }
 
@@ -2095,6 +2138,7 @@ CDetour *CTFWeaponBaseGunGetProjectileGravityDetour = nullptr;
 CDetour *CTFWeaponBaseGunGetProjectileSpreadDetour = nullptr;
 
 int CGameRulesGetSkillLevel = -1;
+static int CGameRulesIsMultiplayer{-1};
 
 class CGameRules
 {
@@ -2102,6 +2146,11 @@ public:
 	int GetSkillLevel()
 	{
 		return call_vfunc<int>(this, CGameRulesGetSkillLevel);
+	}
+
+	bool IsMultiplayer()
+	{
+		return call_vfunc<bool>(this, CGameRulesIsMultiplayer);
 	}
 };
 
@@ -2140,12 +2189,147 @@ public:
 
 int CGameRulesGetAmmoQuantityScale = -1;
 
+static const char *g_szGameRulesProxy{nullptr};
+
+CBaseEntity * FindEntityByServerClassname(int iStart, const char * pServerClassName)
+{
+	constexpr int g_iEdictCount = 2048;
+	
+	if (iStart >= g_iEdictCount)
+		return nullptr;
+	for (int i = iStart; i < g_iEdictCount; i++)
+	{
+		CBaseEntity * pEnt = gamehelpers->ReferenceToEntity(i);
+		if (!pEnt)
+			continue;
+		IServerNetworkable * pNetworkable = ((IServerUnknown *)pEnt)->GetNetworkable();
+		if (!pNetworkable)
+			continue;
+		const char * pName = pNetworkable->GetServerClass()->GetName();
+		if (pName && !strcmp(pName, pServerClassName))
+			return pEnt;
+	}
+	return nullptr;
+}
+
+static bool baseentity_funcs_detoured{false};
+
+static int CBaseEntityGetTracerAttachment_offset{-1};
+static int CBaseEntityMakeTracer_offset{-1};
+static int CBaseEntityGetTracerType_offset{-1};
+
+static CDetour *CBaseEntityGetTracerAttachmentDetour{nullptr};
+static CDetour *CBaseEntityMakeTracerDetour{nullptr};
+static CDetour *CBaseEntityGetTracerTypeDetour{nullptr};
+
+static void *UTIL_TracerPtr{nullptr};
+static void *UTIL_ParticleTracerPtr{nullptr};
+
+void UTIL_ParticleTracer( const char *pszTracerEffectName, const Vector &vecStart, const Vector &vecEnd, int iEntIndex, int iAttachment, bool bWhiz )
+{
+	(void_to_func<void(*)(const char *, const Vector &, const Vector &, int, int, bool)>(UTIL_ParticleTracerPtr))(pszTracerEffectName, vecStart, vecEnd, iEntIndex, iAttachment, bWhiz);
+}
+
+void UTIL_Tracer( const Vector &vecStart, const Vector &vecEnd, int iEntIndex, int iAttachment, float flVelocity, bool bWhiz, const char *pCustomTracerName, int iParticleID )
+{
+	(void_to_func<void(*)(const Vector &, const Vector &, int, int, float, bool, const char *, int)>(UTIL_TracerPtr))(vecStart, vecEnd, iEntIndex, iAttachment, flVelocity, bWhiz, pCustomTracerName, iParticleID);
+}
+
+DETOUR_DECL_MEMBER0(CBaseEntityGetTracerType, const char *)
+{
+	if(current_custombulletinfo != nullptr) {
+		if(!current_custombulletinfo->tracer_name.empty()) {
+			return current_custombulletinfo->tracer_name.c_str();
+		}
+	}
+
+	return nullptr;
+}
+
+DETOUR_DECL_MEMBER0(CBaseEntityGetTracerAttachment, int)
+{
+	if(current_custombulletinfo != nullptr) {
+		if(current_custombulletinfo->attachment != TRACER_DEFAULT_ATTACHMENT) {
+			return current_custombulletinfo->attachment;
+		}
+	}
+
+	int iAttachment = TRACER_DONT_USE_ATTACHMENT;
+
+	if ( g_pGameRules && g_pGameRules->IsMultiplayer() )
+	{
+		iAttachment = 1;
+	}
+
+	return iAttachment;
+}
+
+DETOUR_DECL_MEMBER3(CBaseEntityMakeTracer, void, const Vector &,vecTracerSrc, const trace_t &,tr, int, iTracerType)
+{
+	CBaseEntity *pThis{(CBaseEntity *)this};
+
+	const char *pszTracerName = ((CBaseEntityGetTracerTypeClass *)this)->CBaseEntityGetTracerType();
+
+	Vector vNewSrc = vecTracerSrc;
+
+	int iAttachment = ((CBaseEntityGetTracerAttachmentClass *)this)->CBaseEntityGetTracerAttachment();
+
+	if(current_custombulletinfo != nullptr) {
+		if(current_custombulletinfo->forced_tracer_type != TRACER_INVALID) {
+			iTracerType = current_custombulletinfo->forced_tracer_type;
+		}
+	}
+
+	switch ( iTracerType )
+	{
+	case TRACER_NONE:
+		break;
+	case TRACER_RAIL:
+		//
+		break;
+	case TRACER_BEAM:
+		//
+		break;
+	case TRACER_LINE:
+		UTIL_Tracer( vNewSrc, tr.endpos, pThis->entindex(), iAttachment, 0.0f, false, pszTracerName );
+		break;
+	case TRACER_LINE_AND_WHIZ:
+		UTIL_Tracer( vNewSrc, tr.endpos, pThis->entindex(), iAttachment, 0.0f, true, pszTracerName );
+		break;
+	case TRACER_PARTICLE:
+		UTIL_ParticleTracer( pszTracerName, vNewSrc, tr.endpos, pThis->entindex(), iAttachment, false );
+		break;
+	case TRACER_PARTICLE_AND_WHIZ:
+		UTIL_ParticleTracer( pszTracerName, vNewSrc, tr.endpos, pThis->entindex(), iAttachment, true );
+		break;
+	}
+}
+
 void Sample::OnCoreMapStart(edict_t * pEdictList, int edictCount, int clientMax)
 {
+	g_pGameRules = (CGameRules *)g_pSDKTools->GetGameRules();
+
+	if(!baseentity_funcs_detoured) {
+		CBaseEntity *gamerules_proxy{FindEntityByServerClassname(0, g_szGameRulesProxy)};
+		if(gamerules_proxy) {
+			void **vtabl = *(void ***)gamerules_proxy;
+
+			CBaseEntityGetTracerAttachmentDetour = DETOUR_CREATE_MEMBER(CBaseEntityGetTracerAttachment, vtabl[CBaseEntityGetTracerAttachment_offset])
+			CBaseEntityGetTracerAttachmentDetour->EnableDetour();
+
+			CBaseEntityMakeTracerDetour = DETOUR_CREATE_MEMBER(CBaseEntityMakeTracer, vtabl[CBaseEntityMakeTracer_offset])
+			CBaseEntityMakeTracerDetour->EnableDetour();
+
+			CBaseEntityGetTracerTypeDetour = DETOUR_CREATE_MEMBER(CBaseEntityMakeTracer, vtabl[CBaseEntityGetTracerType_offset])
+			CBaseEntityGetTracerTypeDetour->EnableDetour();
+
+			baseentity_funcs_detoured = true;
+		}
+	}
+
 	if(!gamerules_vtable_assigned) {
-		CGameRules *gamerules{(CGameRules *)g_pSDKTools->GetGameRules()};
-		if(gamerules) {
-			void **vtabl = *(void ***)gamerules;
+		if(g_pGameRules) {
+			void **vtabl = *(void ***)g_pGameRules;
 
 			SourceHook::SetMemAccess(vtabl, (CGameRulesGetAmmoQuantityScale * sizeof(void *)) + 4, SH_MEM_READ|SH_MEM_WRITE|SH_MEM_EXEC);
 
@@ -2303,6 +2487,12 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "tf2_misc_dir.vpk");
 	filesystem->AddSearchPath( pPath, "WEAPONS" );
 
+	gameconfs->LoadGameConfigFile("sdktools.games", &g_pGameConf, nullptr, 0);
+	
+	g_szGameRulesProxy = g_pGameConf->GetKeyValue("GameRulesProxy");
+	
+	gameconfs->CloseGameConfigFile(g_pGameConf);
+
 	gameconfs->LoadGameConfigFile("wpnhack", &g_pGameConf, nullptr, 0);
 
 	CDetourManager::Init(g_pSM->GetScriptingEngine(), g_pGameConf);
@@ -2330,6 +2520,15 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	g_pGameConf->GetOffset("CBaseCombatWeapon::GetSubType", &CBaseCombatWeaponGetSubType);
 	g_pGameConf->GetOffset("CBaseCombatWeapon::SetSubType", &CBaseCombatWeaponSetSubType);
+
+	g_pGameConf->GetOffset("CBaseEntity::GetTracerAttachment", &CBaseEntityGetTracerAttachment_offset);
+	g_pGameConf->GetOffset("CBaseEntity::MakeTracer", &CBaseEntityMakeTracer_offset);
+	g_pGameConf->GetOffset("CBaseEntity::GetTracerType", &CBaseEntityGetTracerType_offset);
+
+	g_pGameConf->GetOffset("CGameRules::IsMultiplayer", &CGameRulesIsMultiplayer);
+
+	g_pGameConf->GetMemSig("UTIL_Tracer", &UTIL_TracerPtr);
+	g_pGameConf->GetMemSig("UTIL_ParticleTracer", &UTIL_ParticleTracerPtr);
 
 	pKeyValuesLoadFromFile = DETOUR_CREATE_MEMBER(KeyValuesLoadFromFile, "KeyValues::LoadFromFile")
 	pKeyValuesLoadFromFile->EnableDetour();
@@ -2414,8 +2613,6 @@ void Sample::SDK_OnAllLoaded()
 	SM_GET_LATE_IFACE(SDKTOOLS, g_pSDKTools);
 	SM_GET_LATE_IFACE(SDKHOOKS, g_pSDKHooks);
 
-	g_pGameRules = (CGameRules *)g_pSDKTools->GetGameRules();
-
 	g_pSDKHooks->AddEntityListener(this);
 }
 
@@ -2435,6 +2632,18 @@ void Sample::SDK_OnUnload()
 	CTFWeaponBaseGunGetProjectileSpeedDetour->Destroy();
 	CTFWeaponBaseGunGetProjectileGravityDetour->Destroy();
 	CTFWeaponBaseGunGetProjectileSpreadDetour->Destroy();
+
+	if(CBaseEntityGetTracerAttachmentDetour) {
+		CBaseEntityGetTracerAttachmentDetour->Destroy();
+	}
+
+	if(CBaseEntityMakeTracerDetour) {
+		CBaseEntityMakeTracerDetour->Destroy();
+	}
+
+	if(CBaseEntityGetTracerTypeDetour) {
+		CBaseEntityGetTracerTypeDetour->Destroy();
+	}
 
 	GuessDamageForceDetour->Destroy();
 
