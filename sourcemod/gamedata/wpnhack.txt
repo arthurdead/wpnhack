@@ -124,6 +124,26 @@
 				"library" "server"
 				"linux" "@_Z19UTIL_ParticleTracerPKcRK6VectorS3_iib"
 			}
+			"LookupWeaponInfoSlot"
+			{
+				"library" "server"
+				"linux" "@_Z20LookupWeaponInfoSlotPKc"
+			}
+			"FX_FireBullets"
+			{
+				"library" "server"
+				"linux" "@_Z14FX_FireBulletsP13CTFWeaponBaseiRK6VectorRK6QAngleiiiffb"
+			}
+			"CTFWeaponBase::Spawn"
+			{
+				"library" "server"
+				"linux" "@_ZN13CTFWeaponBase5SpawnEv"
+			}
+			"CTFWeaponBaseMelee::Spawn"
+			{
+				"library" "server"
+				"linux" "@_ZN18CTFWeaponBaseMelee5SpawnEv"
+			}
 		}
 		"Offsets"
 		{

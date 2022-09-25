@@ -740,6 +740,8 @@ public:
 	custom_weapon_info()
 		: base_class{}
 	{
+		m_WeaponDataCustom[0].Init();
+		m_WeaponDataCustom[1].Init();
 	}
 
 	~custom_weapon_info() = default;
@@ -748,6 +750,12 @@ public:
 	{
 		float m_flProjectileGravity = 0.0;
 		float m_flProjectileSpread = 0.0;
+
+		void Init()
+		{
+			m_flProjectileGravity = 0.0f;
+			m_flProjectileSpread = 0.0f;
+		}
 	};
 
 	custom_weapon_data m_WeaponDataCustom[2];
@@ -860,7 +868,12 @@ CBaseEntity *last_weapon = nullptr;
 
 static bool force_parse = false;
 
-bool ReadWeaponDataFromFileForSlotKV( KeyValues *pKV, const char *szWeaponName, WEAPON_FILE_INFO_HANDLE *phandle )
+WEAPON_FILE_INFO_HANDLE GetInvalidWeaponInfoHandle( void )
+{
+	return (WEAPON_FILE_INFO_HANDLE)WeaponInfoDatabase()->InvalidIndex();
+}
+
+const char *translate_weapon_script(const char *szWeaponName)
 {
 	if(get_weapon_script->GetFunctionCount() > 0) {
 		get_weapon_script->PushCell(last_weapon ? gamehelpers->EntityToBCompatRef(last_weapon) : -1);
@@ -872,13 +885,27 @@ bool ReadWeaponDataFromFileForSlotKV( KeyValues *pKV, const char *szWeaponName, 
 
 		switch(res) {
 			case Pl_Changed: {
+				Q_FileBase( last_script, last_script, sizeof(last_script) );
 				szWeaponName = last_script;
-			}
+			} break;
 			case Pl_Handled:
 			case Pl_Stop: {
-				return false;
+				return nullptr;
 			}
 		}
+	}
+
+	return szWeaponName;
+}
+
+bool ReadWeaponDataFromFileForSlotKV( KeyValues *pKV, const char *szWeaponName, WEAPON_FILE_INFO_HANDLE *phandle )
+{
+	szWeaponName = translate_weapon_script(szWeaponName);
+	if(!szWeaponName) {
+		if(phandle) {
+			*phandle = GetInvalidWeaponInfoHandle();
+		}
+		return false;
 	}
 
 	if ( !phandle )
@@ -895,14 +922,14 @@ bool ReadWeaponDataFromFileForSlotKV( KeyValues *pKV, const char *szWeaponName, 
 		}
 
 		pFileInfo->bParsedScript = false;
-		new (&pFileInfo) GAME_WEP_INFO{};
 	}
 
 	char sz[128];
 	Q_snprintf( sz, sizeof( sz ), "scripts/%s", szWeaponName );
 
-	if ( !pKV )
+	if ( !pKV ) {
 		return false;
+	}
 
 	pFileInfo->Parse( pKV, szWeaponName );
 
@@ -911,25 +938,118 @@ bool ReadWeaponDataFromFileForSlotKV( KeyValues *pKV, const char *szWeaponName, 
 
 static bool g_bInWeaponsParse{false};
 
-DETOUR_DECL_STATIC4(ReadWeaponDataFromFileForSlot, bool, IFileSystem*, pFilesystem, const char *, szWeaponName, WEAPON_FILE_INFO_HANDLE *, phandle, const unsigned char *, pICEKey)
-{
-	if(get_weapon_script->GetFunctionCount() > 0) {
-		get_weapon_script->PushCell(last_weapon ? gamehelpers->EntityToBCompatRef(last_weapon) : -1);
-		get_weapon_script->PushStringEx((char *)szWeaponName, strlen(szWeaponName)+1, SM_PARAM_STRING_COPY|SM_PARAM_STRING_UTF8, 0);
-		get_weapon_script->PushStringEx(last_script, sizeof(last_script), SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
-		get_weapon_script->PushCell(sizeof(last_script));
-		cell_t res = 0;
-		get_weapon_script->Execute(&res);
+#include "mathlib/IceKey.H"
 
-		switch(res) {
-			case Pl_Changed: {
-				szWeaponName = last_script;
+void UTIL_DecodeICE( unsigned char * buffer, int size, const unsigned char *key)
+{
+	if ( !key )
+		return;
+
+	IceKey ice( 0 ); // level 0 = 64bit key
+	ice.set( key ); // set key
+
+	int blockSize = ice.blockSize();
+
+	unsigned char *temp = (unsigned char *)alloca( PAD_NUMBER( size, blockSize ) );
+	unsigned char *p1 = buffer;
+	unsigned char *p2 = temp;
+				
+	// encrypt data in 8 byte blocks
+	int bytesLeft = size;
+	while ( bytesLeft >= blockSize )
+	{
+		ice.decrypt( p1, p2 );
+		bytesLeft -= blockSize;
+		p1+=blockSize;
+		p2+=blockSize;
+	}
+
+	// copy encrypted data back to original buffer
+	Q_memcpy( buffer, temp, size-bytesLeft );
+}
+
+KeyValues* ReadEncryptedKVFile( IFileSystem *pFilesystem, const char *szFilenameWithoutExtension, const unsigned char *pICEKey, bool bForceReadEncryptedFile /*= false*/ )
+{
+	Assert( strchr( szFilenameWithoutExtension, '.' ) == NULL );
+	char szFullName[512];
+
+	// Open the weapon data file, and abort if we can't
+	KeyValues *pKV = new KeyValues( "WeaponDatafile" );
+
+	Q_snprintf(szFullName,sizeof(szFullName), "%s.txt", szFilenameWithoutExtension);
+
+	g_bInWeaponsParse = true;
+	bool loaded_unencrypted = bForceReadEncryptedFile ? false : pKV->LoadFromFile( pFilesystem, szFullName, "WEAPONS" );
+	g_bInWeaponsParse = false;
+
+	if ( bForceReadEncryptedFile || !loaded_unencrypted ) // try to load the normal .txt file first
+	{
+#ifndef _XBOX
+		if ( pICEKey )
+		{
+			Q_snprintf(szFullName,sizeof(szFullName), "%s.ctx", szFilenameWithoutExtension); // fall back to the .ctx file
+
+			FileHandle_t f = pFilesystem->Open( szFullName, "rb", "MOD" );
+
+			if (!f)
+			{
+				pKV->deleteThis();
+				return NULL;
 			}
-			case Pl_Handled:
-			case Pl_Stop: {
-				return false;
+			// load file into a null-terminated buffer
+			int fileSize = pFilesystem->Size(f);
+			char *buffer = (char*)MemAllocScratch(fileSize + 1);
+		
+			Assert(buffer);
+		
+			pFilesystem->Read(buffer, fileSize, f); // read into local buffer
+			buffer[fileSize] = 0; // null terminate file as EOF
+			pFilesystem->Close( f );	// close file after reading
+
+			UTIL_DecodeICE( (unsigned char*)buffer, fileSize, pICEKey );
+
+			bool retOK = pKV->LoadFromBuffer( szFullName, buffer, pFilesystem );
+
+			MemFreeScratch();
+
+			if ( !retOK )
+			{
+				pKV->deleteThis();
+				return NULL;
 			}
 		}
+		else
+		{
+			pKV->deleteThis();
+			return NULL;
+		}
+#else
+		pKV->deleteThis();
+		return NULL;
+#endif
+	}
+
+	return pKV;
+}
+
+DETOUR_DECL_STATIC1(LookupWeaponInfoSlot, WEAPON_FILE_INFO_HANDLE, const char *,name)
+{
+	name = translate_weapon_script(name);
+	if(!name) {
+		return GetInvalidWeaponInfoHandle();
+	}
+
+	return WeaponInfoDatabase()->Find( name );
+}
+
+DETOUR_DECL_STATIC4(ReadWeaponDataFromFileForSlot, bool, IFileSystem*, pFilesystem, const char *, szWeaponName, WEAPON_FILE_INFO_HANDLE *, phandle, const unsigned char *, pICEKey)
+{
+	szWeaponName = translate_weapon_script(szWeaponName);
+	if(!szWeaponName) {
+		if(phandle) {
+			*phandle = GetInvalidWeaponInfoHandle();
+		}
+		return false;
 	}
 
 	if ( !phandle )
@@ -946,14 +1066,28 @@ DETOUR_DECL_STATIC4(ReadWeaponDataFromFileForSlot, bool, IFileSystem*, pFilesyst
 		}
 
 		pFileInfo->bParsedScript = false;
-		new (&pFileInfo) GAME_WEP_INFO{};
 	}
 
-	g_bInWeaponsParse = true;
-	bool ret = DETOUR_STATIC_CALL(ReadWeaponDataFromFileForSlot)(pFilesystem, szWeaponName, phandle, pICEKey);
-	g_bInWeaponsParse = false;
+	char sz[128];
+	Q_snprintf( sz, sizeof( sz ), "scripts/%s", szWeaponName );
 
-	return ret;
+	KeyValues *pKV = ReadEncryptedKVFile( pFilesystem, sz, pICEKey,
+#if defined( DOD_DLL )
+		true			// Only read .ctx files!
+#else
+		false
+#endif
+		);
+
+	if ( !pKV ) {
+		return false;
+	}
+
+	pFileInfo->Parse( pKV, szWeaponName );
+
+	pKV->deleteThis();
+
+	return true;
 }
 
 cell_t precache_weapon_file(IPluginContext *pContext, const cell_t *params)
@@ -973,11 +1107,7 @@ cell_t precache_weapon_file(IPluginContext *pContext, const cell_t *params)
 		}
 	}
 
-	if(!g_pGameRules) {
-		return pContext->ThrowNativeError("gamerules is not loaded");
-	}
-
-	const unsigned char *pICEKey = call_vfunc<const unsigned char *>(g_pGameRules, GetEncryptionKeyoffset);
+	const unsigned char *pICEKey = g_pGameRules ? call_vfunc<const unsigned char *>(g_pGameRules, GetEncryptionKeyoffset) : nullptr;
 
 	WEAPON_FILE_INFO_HANDLE tmp;
 	force_parse = force;
@@ -2092,6 +2222,31 @@ DETOUR_DECL_MEMBER0(CBaseCombatWeaponPrecache, void)
 	last_weapon = nullptr;
 }
 
+DETOUR_DECL_MEMBER0(CTFWeaponBaseSpawn, void)
+{
+	last_weapon = (CBaseEntity *)this;
+	DETOUR_MEMBER_CALL(CTFWeaponBaseSpawn)();
+	last_weapon = nullptr;
+}
+
+DETOUR_DECL_MEMBER0(CTFWeaponBaseMeleeSpawn, void)
+{
+	last_weapon = (CBaseEntity *)this;
+	DETOUR_MEMBER_CALL(CTFWeaponBaseMeleeSpawn)();
+	last_weapon = nullptr;
+}
+
+#define DETOUR_DECL_STATIC10(name, ret, p1type, p1name, p2type, p2name, p3type, p3name, p4type, p4name, p5type, p5name, p6type, p6name, p7type, p7name, p8type, p8name, p9type, p9name, p10type, p10name) \
+ret (*name##_Actual)(p1type, p2type, p3type, p4type, p5type, p6type, p7type, p8type, p9type, p10type) = NULL; \
+ret name(p1type p1name, p2type p2name, p3type p3name, p4type p4name, p5type p5name, p6type p6name, p7type p7name, p8type p8name, p9type p9name, p10type p10name)
+
+DETOUR_DECL_STATIC10(FX_FireBullets, void, CTFWeaponBase *,pWpn, int,iPlayer, const Vector &,vecOrigin, const QAngle &,vecAngles,int,iWeapon, int ,iMode, int, iSeed, float, flSpread, float ,flDamage, bool ,bCritical)
+{
+	last_weapon = (CBaseEntity *)pWpn;
+	DETOUR_STATIC_CALL(FX_FireBullets)(pWpn, iPlayer, vecOrigin, vecAngles, iWeapon, iMode, iSeed, flSpread, flDamage, bCritical);
+	last_weapon = nullptr;
+}
+
 struct TFPlayerClassData_t;
 class CEconItemView;
 DETOUR_DECL_MEMBER4(CTFPlayerItemsMatch, bool, TFPlayerClassData_t *, pData, CEconItemView *, pCurWeaponItem, CEconItemView *, pNewWeaponItem, CTFWeaponBase *, pWpnEntity)
@@ -2127,10 +2282,15 @@ IGameConfig *g_pGameConf = nullptr;
 
 CDetour *TranslateWeaponEntForClassDetour = nullptr;
 CDetour *ReadWeaponDataFromFileForSlotDetour = nullptr;
+CDetour *LookupWeaponInfoSlotDetour = nullptr;
 CDetour *CBaseCombatWeaponPrecacheDetour = nullptr;
+CDetour *CTFWeaponBaseSpawnDetour = nullptr;
+CDetour *CTFWeaponBaseMeleeSpawnDetour = nullptr;
 CDetour *CTFPlayerItemsMatchDetour = nullptr;
 CDetour *CTFPlayerGiveNamedItemDetour = nullptr;
 CDetour *CTFPlayerPickupWeaponFromOtherDetour = nullptr;
+
+CDetour *FX_FireBulletsDetour = nullptr;
 
 CDetour *CreateWeaponInfoDetour = nullptr;
 CDetour *CTFWeaponBaseGunGetProjectileSpeedDetour = nullptr;
@@ -2548,8 +2708,20 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	ReadWeaponDataFromFileForSlotDetour = DETOUR_CREATE_STATIC(ReadWeaponDataFromFileForSlot, "ReadWeaponDataFromFileForSlot")
 	ReadWeaponDataFromFileForSlotDetour->EnableDetour();
 
+	FX_FireBulletsDetour = DETOUR_CREATE_STATIC(FX_FireBullets, "FX_FireBullets")
+	FX_FireBulletsDetour->EnableDetour();
+
+	LookupWeaponInfoSlotDetour = DETOUR_CREATE_STATIC(LookupWeaponInfoSlot, "LookupWeaponInfoSlot")
+	LookupWeaponInfoSlotDetour->EnableDetour();
+
 	CBaseCombatWeaponPrecacheDetour = DETOUR_CREATE_MEMBER(CBaseCombatWeaponPrecache, "CBaseCombatWeapon::Precache")
 	CBaseCombatWeaponPrecacheDetour->EnableDetour();
+
+	CTFWeaponBaseSpawnDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseSpawn, "CTFWeaponBase::Spawn")
+	CTFWeaponBaseSpawnDetour->EnableDetour();
+
+	CTFWeaponBaseMeleeSpawnDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseMeleeSpawn, "CTFWeaponBaseMelee::Spawn")
+	CTFWeaponBaseMeleeSpawnDetour->EnableDetour();
 
 	CTFPlayerItemsMatchDetour = DETOUR_CREATE_MEMBER(CTFPlayerItemsMatch, "CTFPlayer::ItemsMatch")
 	CTFPlayerItemsMatchDetour->EnableDetour();
@@ -2623,6 +2795,7 @@ void Sample::SDK_OnUnload()
 
 	TranslateWeaponEntForClassDetour->Destroy();
 	ReadWeaponDataFromFileForSlotDetour->Destroy();
+	LookupWeaponInfoSlotDetour->Destroy();
 	CBaseCombatWeaponPrecacheDetour->Destroy();
 	CTFPlayerItemsMatchDetour->Destroy();
 	CTFPlayerGiveNamedItemDetour->Destroy();
@@ -2632,6 +2805,10 @@ void Sample::SDK_OnUnload()
 	CTFWeaponBaseGunGetProjectileSpeedDetour->Destroy();
 	CTFWeaponBaseGunGetProjectileGravityDetour->Destroy();
 	CTFWeaponBaseGunGetProjectileSpreadDetour->Destroy();
+
+	CTFWeaponBaseSpawnDetour->Destroy();
+	CTFWeaponBaseMeleeSpawnDetour->Destroy();
+	FX_FireBulletsDetour->Destroy();
 
 	if(CBaseEntityGetTracerAttachmentDetour) {
 		CBaseEntityGetTracerAttachmentDetour->Destroy();
