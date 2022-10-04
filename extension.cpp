@@ -135,6 +135,14 @@ void *func_to_void(T ptr)
 	return p;
 }
 
+template <typename T>
+int vfunc_index(T func)
+{
+	SourceHook::MemFuncInfo info{};
+	SourceHook::GetFuncInfo<T>(func, info);
+	return info.vtblindex;
+}
+
 class CGameRules;
 
 ISDKTools *g_pSDKTools = nullptr;
@@ -660,37 +668,7 @@ public:
 		m_WeaponData[TF_WEAPON_SECONDARY_MODE].m_flProjectileSpeed = pKeyValuesData->GetFloat("Secondary_ProjectileSpeed", 0.0f);
 	}
 
-	CTFWeaponInfo()
-		: FileWeaponInfo_t{}
-	{
-		m_WeaponData[0].Init();
-		m_WeaponData[1].Init();
-
-		m_bGrenade = false;
-		m_flDamageRadius = 0.0f;
-		m_flPrimerTime = 0.0f;
-		m_bSuppressGrenTimer = false;
-		m_bLowerWeapon = false;
-
-		m_bHasTeamSkins_Viewmodel = false;
-		m_bHasTeamSkins_Worldmodel = false;
-
-		m_szMuzzleFlashModel[0] = '\0';
-		m_flMuzzleFlashModelDuration = 0;
-		m_szMuzzleFlashParticleEffect[0] = '\0';
-
-		m_szTracerEffect[0] = '\0';
-
-		m_szBrassModel[0] = '\0';
-		m_bDoInstantEjectBrass = true;
-
-		m_szExplosionSound[0] = '\0';
-		m_szExplosionEffect[0] = '\0';
-		m_szExplosionPlayerEffect[0] = '\0';
-		m_szExplosionWaterEffect[0] = '\0';
-
-		m_iWeaponType = TF_WPN_TYPE_PRIMARY;
-	}
+	CTFWeaponInfo() = delete;
 
 	~CTFWeaponInfo() = default;
 
@@ -737,8 +715,7 @@ class custom_weapon_info final : public GAME_WEP_INFO
 public:
 	using base_class = GAME_WEP_INFO;
 
-	custom_weapon_info()
-		: base_class{}
+	void Init()
 	{
 		m_WeaponDataCustom[0].Init();
 		m_WeaponDataCustom[1].Init();
@@ -769,6 +746,11 @@ public:
 
 		m_WeaponDataCustom[TF_WEAPON_SECONDARY_MODE].m_flProjectileGravity = pKeyValuesData->GetFloat("Secondary_ProjectileGravity", 0.0f);
 		m_WeaponDataCustom[TF_WEAPON_SECONDARY_MODE].m_flProjectileSpread = pKeyValuesData->GetFloat("Secondary_ProjectileSpread", 0.0f);
+	}
+
+	void Parse_nonvirtual(KeyValues *pKeyValuesData, const char *szWeaponName)
+	{
+		custom_weapon_info::Parse(pKeyValuesData, szWeaponName);
 	}
 };
 
@@ -805,9 +787,25 @@ DETOUR_DECL_MEMBER0(CTFWeaponBaseGunGetProjectileSpread, float)
 	return reinterpret_cast<custom_weapon_info *>(m_pWeaponInfo)->m_WeaponDataCustom[m_iWeaponMode].m_flProjectileSpread;
 }
 
+#include <sourcehook/sh_memory.h>
+
+static void *CTFWeaponInfoCTOR{nullptr};
+static int FileWeaponInfo_tParse_offset{-1};
+
+static bool weapon_info_vtable_set{false};
+
 DETOUR_DECL_STATIC0(CreateWeaponInfo, FileWeaponInfo_t *)
 {
-	return new custom_weapon_info{};
+	custom_weapon_info *block{(custom_weapon_info *)calloc(sizeof(custom_weapon_info), 1)};
+	call_mfunc<void, CTFWeaponInfo>(block, CTFWeaponInfoCTOR);
+	if(!weapon_info_vtable_set) {
+		void **vtabl = *(void ***)block;
+		SourceHook::SetMemAccess(vtabl, (FileWeaponInfo_tParse_offset * sizeof(void *)) + 4, SH_MEM_READ|SH_MEM_WRITE|SH_MEM_EXEC);
+		vtabl[FileWeaponInfo_tParse_offset] = func_to_void(&custom_weapon_info::Parse_nonvirtual);
+		weapon_info_vtable_set = true;
+	}
+	block->Init();
+	return block;
 }
 
 static CUtlDict< FileWeaponInfo_t*, unsigned short > *WeaponInfoDatabase()
@@ -817,7 +815,8 @@ static CUtlDict< FileWeaponInfo_t*, unsigned short > *WeaponInfoDatabase()
 
 static void remove_weapon_info(const char *name, unsigned short idx)
 {
-	delete reinterpret_cast<custom_weapon_info *>((*WeaponInfoDatabase())[idx]);
+	custom_weapon_info *block{reinterpret_cast<custom_weapon_info *>((*WeaponInfoDatabase())[idx])};
+	delete block;
 	WeaponInfoDatabase()->RemoveAt(idx);
 }
 
@@ -863,30 +862,41 @@ FileWeaponInfo_t *GetFileWeaponInfoFromHandle( WEAPON_FILE_INFO_HANDLE handle )
 
 IForward *get_weapon_script = nullptr;
 
-static char last_script[PATH_MAX];
+static char last_script_name[PATH_MAX];
+static char last_script_path[PATH_MAX];
+
 CBaseEntity *last_weapon = nullptr;
 
 static bool force_parse = false;
+
+static WEAPON_FILE_INFO_HANDLE tmp_info_handle;
 
 WEAPON_FILE_INFO_HANDLE GetInvalidWeaponInfoHandle( void )
 {
 	return (WEAPON_FILE_INFO_HANDLE)WeaponInfoDatabase()->InvalidIndex();
 }
 
-const char *translate_weapon_script(const char *szWeaponName)
+const char *translate_weapon_script(const char *szWeaponName, const char **szWeaponScript)
 {
+	if(szWeaponScript) {
+		*szWeaponScript = nullptr;
+	}
+
 	if(get_weapon_script->GetFunctionCount() > 0) {
 		get_weapon_script->PushCell(last_weapon ? gamehelpers->EntityToBCompatRef(last_weapon) : -1);
 		get_weapon_script->PushStringEx((char *)szWeaponName, strlen(szWeaponName)+1, SM_PARAM_STRING_COPY|SM_PARAM_STRING_UTF8, 0);
-		get_weapon_script->PushStringEx(last_script, sizeof(last_script), SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
-		get_weapon_script->PushCell(sizeof(last_script));
+		get_weapon_script->PushStringEx(last_script_path, sizeof(last_script_path), SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
+		get_weapon_script->PushCell(sizeof(last_script_path));
 		cell_t res = 0;
 		get_weapon_script->Execute(&res);
 
 		switch(res) {
 			case Pl_Changed: {
-				Q_FileBase( last_script, last_script, sizeof(last_script) );
-				szWeaponName = last_script;
+				if(szWeaponScript) {
+					*szWeaponScript = last_script_path;
+				}
+				Q_FileBase( last_script_path, last_script_name, sizeof(last_script_name) );
+				szWeaponName = last_script_name;
 			} break;
 			case Pl_Handled:
 			case Pl_Stop: {
@@ -898,21 +908,23 @@ const char *translate_weapon_script(const char *szWeaponName)
 	return szWeaponName;
 }
 
+DETOUR_DECL_MEMBER0(CBaseCombatWeaponGetName, const char *)
+{
+	return gamehelpers->GetEntityClassname((CBaseEntity *)this);
+}
+
 bool ReadWeaponDataFromFileForSlotKV( KeyValues *pKV, const char *szWeaponName, WEAPON_FILE_INFO_HANDLE *phandle )
 {
-	szWeaponName = translate_weapon_script(szWeaponName);
+	if(!phandle) {
+		phandle = &tmp_info_handle;
+	}
+
+	szWeaponName = translate_weapon_script(szWeaponName, nullptr);
 	if(!szWeaponName) {
-		if(phandle) {
-			*phandle = GetInvalidWeaponInfoHandle();
-		}
+		*phandle = GetInvalidWeaponInfoHandle();
 		return false;
 	}
 
-	if ( !phandle )
-	{
-		return false;
-	}
-	
 	*phandle = FindWeaponInfoSlot( szWeaponName );
 	FileWeaponInfo_t *pFileInfo = GetFileWeaponInfoFromHandle( *phandle );
 
@@ -923,9 +935,6 @@ bool ReadWeaponDataFromFileForSlotKV( KeyValues *pKV, const char *szWeaponName, 
 
 		pFileInfo->bParsedScript = false;
 	}
-
-	char sz[128];
-	Q_snprintf( sz, sizeof( sz ), "scripts/%s", szWeaponName );
 
 	if ( !pKV ) {
 		return false;
@@ -987,7 +996,7 @@ KeyValues* ReadEncryptedKVFile( IFileSystem *pFilesystem, const char *szFilename
 #ifndef _XBOX
 		if ( pICEKey )
 		{
-			Q_snprintf(szFullName,sizeof(szFullName), "%s.ctx", szFilenameWithoutExtension); // fall back to the .ctx file
+			Q_snprintf(szFullName,sizeof(szFullName), "scripts/%s.ctx", szFilenameWithoutExtension); // fall back to the .ctx file
 
 			FileHandle_t f = pFilesystem->Open( szFullName, "rb", "MOD" );
 
@@ -1034,7 +1043,7 @@ KeyValues* ReadEncryptedKVFile( IFileSystem *pFilesystem, const char *szFilename
 
 DETOUR_DECL_STATIC1(LookupWeaponInfoSlot, WEAPON_FILE_INFO_HANDLE, const char *,name)
 {
-	name = translate_weapon_script(name);
+	name = translate_weapon_script(name, nullptr);
 	if(!name) {
 		return GetInvalidWeaponInfoHandle();
 	}
@@ -1044,16 +1053,14 @@ DETOUR_DECL_STATIC1(LookupWeaponInfoSlot, WEAPON_FILE_INFO_HANDLE, const char *,
 
 DETOUR_DECL_STATIC4(ReadWeaponDataFromFileForSlot, bool, IFileSystem*, pFilesystem, const char *, szWeaponName, WEAPON_FILE_INFO_HANDLE *, phandle, const unsigned char *, pICEKey)
 {
-	szWeaponName = translate_weapon_script(szWeaponName);
-	if(!szWeaponName) {
-		if(phandle) {
-			*phandle = GetInvalidWeaponInfoHandle();
-		}
-		return false;
+	if(!phandle) {
+		phandle = &tmp_info_handle;
 	}
 
-	if ( !phandle )
-	{
+	const char *szWeaponScript{nullptr};
+	szWeaponName = translate_weapon_script(szWeaponName, &szWeaponScript);
+	if(!szWeaponName) {
+		*phandle = GetInvalidWeaponInfoHandle();
 		return false;
 	}
 
@@ -1069,7 +1076,12 @@ DETOUR_DECL_STATIC4(ReadWeaponDataFromFileForSlot, bool, IFileSystem*, pFilesyst
 	}
 
 	char sz[128];
-	Q_snprintf( sz, sizeof( sz ), "scripts/%s", szWeaponName );
+	if(szWeaponScript) {
+		Q_snprintf( sz, sizeof( sz ), "%s", szWeaponScript );
+		V_StripExtension( sz, sz, sizeof(sz) );
+	} else {
+		Q_snprintf( sz, sizeof( sz ), "%s", szWeaponName );
+	}
 
 	KeyValues *pKV = ReadEncryptedKVFile( pFilesystem, sz, pICEKey,
 #if defined( DOD_DLL )
@@ -1109,9 +1121,8 @@ cell_t precache_weapon_file(IPluginContext *pContext, const cell_t *params)
 
 	const unsigned char *pICEKey = g_pGameRules ? call_vfunc<const unsigned char *>(g_pGameRules, GetEncryptionKeyoffset) : nullptr;
 
-	WEAPON_FILE_INFO_HANDLE tmp;
 	force_parse = force;
-	bool added = ReadWeaponDataFromFileForSlot(filesystem, fileBase, &tmp, pICEKey);
+	bool added = ReadWeaponDataFromFileForSlot(filesystem, fileBase, &tmp_info_handle, pICEKey);
 	force_parse = false;
 	return added;
 }
@@ -1139,9 +1150,8 @@ cell_t precache_weapon_kv(IPluginContext *pContext, const cell_t *params)
 		return pContext->ThrowNativeError("Invalid KeyValues handle %x (error: %d)", params[1], err);
 	}
 
-	WEAPON_FILE_INFO_HANDLE tmp;
 	force_parse = force;
-	bool added = ReadWeaponDataFromFileForSlotKV(pKV, fileBase, &tmp);
+	bool added = ReadWeaponDataFromFileForSlotKV(pKV, fileBase, &tmp_info_handle);
 	force_parse = false;
 	return added;
 }
@@ -1289,6 +1299,11 @@ public:
 	int entindex()
 	{
 		return gamehelpers->EntityToBCompatRef(this);
+	}
+
+	const char *GetClassname()
+	{
+		return gamehelpers->GetEntityClassname(this);
 	}
 
 	void FireBullets( const FireBulletsInfo_t &info )
@@ -2215,25 +2230,33 @@ DETOUR_DECL_STATIC2(TranslateWeaponEntForClass, const char *, const char *, pszN
 	return DETOUR_STATIC_CALL(TranslateWeaponEntForClass)(pszName, iClass);
 }
 
+static bool in_spawn{false};
+
 DETOUR_DECL_MEMBER0(CBaseCombatWeaponPrecache, void)
 {
 	last_weapon = (CBaseEntity *)this;
 	DETOUR_MEMBER_CALL(CBaseCombatWeaponPrecache)();
-	last_weapon = nullptr;
+	if(!in_spawn) {
+		last_weapon = nullptr;
+	}
 }
 
 DETOUR_DECL_MEMBER0(CTFWeaponBaseSpawn, void)
 {
+	in_spawn = true;
 	last_weapon = (CBaseEntity *)this;
 	DETOUR_MEMBER_CALL(CTFWeaponBaseSpawn)();
 	last_weapon = nullptr;
+	in_spawn = false;
 }
 
 DETOUR_DECL_MEMBER0(CTFWeaponBaseMeleeSpawn, void)
 {
+	in_spawn = true;
 	last_weapon = (CBaseEntity *)this;
 	DETOUR_MEMBER_CALL(CTFWeaponBaseMeleeSpawn)();
 	last_weapon = nullptr;
+	in_spawn = false;
 }
 
 #define DETOUR_DECL_STATIC10(name, ret, p1type, p1name, p2type, p2name, p3type, p3name, p4type, p4name, p5type, p5name, p6type, p6name, p7type, p7name, p8type, p8name, p9type, p9name, p10type, p10name) \
@@ -2344,8 +2367,6 @@ public:
 		}
 	}
 };
-
-#include <sourcehook/sh_memory.h>
 
 int CGameRulesGetAmmoQuantityScale = -1;
 
@@ -2633,6 +2654,8 @@ DETOUR_DECL_MEMBER4(KeyValuesLoadFromFile, bool, IBaseFileSystem *,filesystem, c
 	return ret;
 }
 
+CDetour *CBaseCombatWeaponGetNameDetour{nullptr};
+
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
 	char pPath[MAX_PATH];
@@ -2663,6 +2686,10 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	g_pGameConf->GetMemSig("FileWeaponInfo_t::Parse", &FileWeaponInfo_tParseAddr);
 	g_pGameConf->GetMemSig("CTFWeaponInfo::Parse", &CTFWeaponInfoParseAddr);
+
+	g_pGameConf->GetMemSig("CTFWeaponInfo::CTFWeaponInfo", &CTFWeaponInfoCTOR);
+
+	FileWeaponInfo_tParse_offset = vfunc_index(&FileWeaponInfo_t::Parse);
 
 	g_pGameConf->GetMemSig("GetAmmoDef", &GetAmmoDefAddr);
 
@@ -2744,6 +2771,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	CTFWeaponBaseGunGetProjectileSpreadDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseGunGetProjectileSpread, "CTFWeaponBaseGun::GetProjectileSpread")
 	CTFWeaponBaseGunGetProjectileSpreadDetour->EnableDetour();
 
+	CBaseCombatWeaponGetNameDetour = DETOUR_CREATE_MEMBER(CBaseCombatWeaponGetName, "CBaseCombatWeapon::GetName")
+	CBaseCombatWeaponGetNameDetour->EnableDetour();
+
 	sm_sendprop_info_t tmp_sp_info;
 
 	gamehelpers->FindSendPropInfo("CTFWeaponBase", "m_flReloadPriorNextFire", &tmp_sp_info);
@@ -2809,6 +2839,8 @@ void Sample::SDK_OnUnload()
 	CTFWeaponBaseSpawnDetour->Destroy();
 	CTFWeaponBaseMeleeSpawnDetour->Destroy();
 	FX_FireBulletsDetour->Destroy();
+
+	CBaseCombatWeaponGetNameDetour->Destroy();
 
 	if(CBaseEntityGetTracerAttachmentDetour) {
 		CBaseEntityGetTracerAttachmentDetour->Destroy();

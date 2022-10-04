@@ -144,6 +144,16 @@
 				"library" "server"
 				"linux" "@_ZN18CTFWeaponBaseMelee5SpawnEv"
 			}
+			"CTFWeaponInfo::CTFWeaponInfo"
+			{
+				"library" "server"
+				"linux" "@_ZN13CTFWeaponInfoC1Ev"
+			}
+			"CBaseCombatWeapon::GetName"
+			{
+				"library" "server"
+				"linux" "@_ZNK17CBaseCombatWeapon7GetNameEv"
+			}
 		}
 		"Offsets"
 		{
