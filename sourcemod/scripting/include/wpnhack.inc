@@ -771,6 +771,16 @@ enum struct FireBulletsInfo_t
 
 native void FireBullets(int entity, const FireBulletsInfo_tVar info);
 
+enum struct ImpactEffectTraceInfo
+{
+	float startpos[3];
+	float endpos[3];
+	float normal[3];
+	int hitentity;
+}
+
+forward Action entity_impact_effect(int entity, ImpactEffectTraceInfo info, int nDamageType);
+
 #if !defined REQUIRE_EXTENSIONS
 public void __ext_wpnhack_SetNTVOptional()
 {

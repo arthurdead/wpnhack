@@ -154,6 +154,21 @@
 				"library" "server"
 				"linux" "@_ZNK17CBaseCombatWeapon7GetNameEv"
 			}
+			"CTFPlayer::FireBullet"
+			{
+				"library" "server"
+				"linux" "@_ZN9CTFPlayer10FireBulletEP13CTFWeaponBaseRK17FireBulletsInfo_tbii"
+			}
+			"UTIL_ImpactTrace"
+			{
+				"library" "server"
+				"linux" "@_Z16UTIL_ImpactTraceP10CGameTraceiPKc"
+			}
+			"CTFPlayer::ImpactWaterTrace"
+			{
+				"library" "server"
+				"linux" "@_ZN9CTFPlayer16ImpactWaterTraceER10CGameTraceRK6Vector"
+			}
 		}
 		"Offsets"
 		{
@@ -212,6 +227,10 @@
 			"CGameRules::IsMultiplayer"
 			{
 				"linux" "35"
+			}
+			"CBaseEntity::DoImpactEffect"
+			{
+				"linux" "117"
 			}
 		}
 	}

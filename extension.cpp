@@ -1902,6 +1902,18 @@ Vector addr_deref_vec(const cell_t *&addr)
 	return ret;
 }
 
+void addr_read_vec(cell_t *&addr, const Vector &vec)
+{
+	*addr = sp_ftoc(vec.x);
+	++addr;
+
+	*addr = sp_ftoc(vec.y);
+	++addr;
+
+	*addr = sp_ftoc(vec.z);
+	++addr;
+}
+
 enum AmmoTracer_t
 {
 	TRACER_INVALID = -1,
@@ -2398,10 +2410,12 @@ static bool baseentity_funcs_detoured{false};
 static int CBaseEntityGetTracerAttachment_offset{-1};
 static int CBaseEntityMakeTracer_offset{-1};
 static int CBaseEntityGetTracerType_offset{-1};
+static int CBaseEntityDoImpactEffect_offset{-1};
 
 static CDetour *CBaseEntityGetTracerAttachmentDetour{nullptr};
 static CDetour *CBaseEntityMakeTracerDetour{nullptr};
 static CDetour *CBaseEntityGetTracerTypeDetour{nullptr};
+static CDetour *CBaseEntityDoImpactEffectDetour{nullptr};
 
 static void *UTIL_TracerPtr{nullptr};
 static void *UTIL_ParticleTracerPtr{nullptr};
@@ -2414,6 +2428,95 @@ void UTIL_ParticleTracer( const char *pszTracerEffectName, const Vector &vecStar
 void UTIL_Tracer( const Vector &vecStart, const Vector &vecEnd, int iEntIndex, int iAttachment, float flVelocity, bool bWhiz, const char *pCustomTracerName, int iParticleID )
 {
 	(void_to_func<void(*)(const Vector &, const Vector &, int, int, float, bool, const char *, int)>(UTIL_TracerPtr))(vecStart, vecEnd, iEntIndex, iAttachment, flVelocity, bWhiz, pCustomTracerName, iParticleID);
+}
+
+IForward *entity_impact_effect = nullptr;
+
+#define IMPACTEFFECTTRACEINFO_SIZE (((4 * 3) * 3) + 4)
+#define IMPACTEFFECTTRACEINFO_SIZE_IN_CELLS (IMPACTEFFECTTRACEINFO_SIZE / sizeof(cell_t))
+
+static bool in_player_firebullet{false};
+static bool clientside_impacteffect{false};
+static int last_damagetype{DMG_GENERIC};
+
+DETOUR_DECL_MEMBER5(CTFPlayerFireBullet, void, CTFWeaponBase *,pWpn, const FireBulletsInfo_t &,info, bool ,bDoEffects, int ,nDamageType, int ,nCustomDamageType)
+{
+	last_weapon = pWpn;
+	in_player_firebullet = true;
+	if(!bDoEffects) {
+		bDoEffects = true;
+		clientside_impacteffect = true;
+	}
+	last_damagetype = nDamageType;
+	DETOUR_MEMBER_CALL(CTFPlayerFireBullet)(pWpn, info, bDoEffects, nDamageType, nCustomDamageType);
+	clientside_impacteffect = false;
+	in_player_firebullet = false;
+	last_weapon = nullptr;
+}
+
+static bool on_impact_trace(CBaseEntity *pEntity, trace_t &tr, int nDamageType)
+{
+	if(entity_impact_effect->GetFunctionCount() > 0) {
+		entity_impact_effect->PushCell(pEntity ? gamehelpers->EntityToBCompatRef(pEntity) : -1);
+		cell_t data[IMPACTEFFECTTRACEINFO_SIZE_IN_CELLS]{};
+		cell_t *dataptr{data};
+		addr_read_vec(dataptr, tr.startpos);
+		addr_read_vec(dataptr, tr.endpos);
+		addr_read_vec(dataptr, tr.plane.normal);
+		*dataptr = tr.m_pEnt ? gamehelpers->EntityToBCompatRef(tr.m_pEnt) : -1;
+		entity_impact_effect->PushArray(data, IMPACTEFFECTTRACEINFO_SIZE_IN_CELLS, 0);
+		entity_impact_effect->PushCell(nDamageType);
+		cell_t res = 0;
+		entity_impact_effect->Execute(&res);
+
+		switch(res) {
+			case Pl_Handled:
+			case Pl_Stop: {
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
+DETOUR_DECL_MEMBER2(CTFPlayerImpactWaterTrace, void, trace_t &,trace, const Vector &,vecStart)
+{
+	if(in_player_firebullet) {
+		if(!on_impact_trace(last_weapon, trace, last_damagetype)) {
+			return;
+		}
+
+		if(clientside_impacteffect) {
+			return;
+		}
+	}
+
+	DETOUR_MEMBER_CALL(CTFPlayerImpactWaterTrace)(trace, vecStart);
+}
+
+DETOUR_DECL_STATIC3(UTIL_ImpactTraceCallback, void, trace_t *, tr, int, nDamageType, const char *,pCustomImpactName)
+{
+	if(in_player_firebullet) {
+		if(!on_impact_trace(last_weapon, *tr, nDamageType)) {
+			return;
+		}
+
+		if(clientside_impacteffect) {
+			return;
+		}
+	}
+
+	DETOUR_STATIC_CALL(UTIL_ImpactTraceCallback)(tr, nDamageType, pCustomImpactName);
+}
+
+DETOUR_DECL_MEMBER2(CBaseEntityDoImpactEffect, void, trace_t &, tr, int, nDamageType)
+{
+	if(!on_impact_trace((CBaseEntity *)this, tr, nDamageType)) {
+		return;
+	}
+
+	DETOUR_MEMBER_CALL(CBaseEntityDoImpactEffect)(tr, nDamageType);
 }
 
 DETOUR_DECL_MEMBER0(CBaseEntityGetTracerType, const char *)
@@ -2503,6 +2606,9 @@ void Sample::OnCoreMapStart(edict_t * pEdictList, int edictCount, int clientMax)
 
 			CBaseEntityGetTracerTypeDetour = DETOUR_CREATE_MEMBER(CBaseEntityMakeTracer, vtabl[CBaseEntityGetTracerType_offset])
 			CBaseEntityGetTracerTypeDetour->EnableDetour();
+
+			CBaseEntityDoImpactEffectDetour = DETOUR_CREATE_MEMBER(CBaseEntityDoImpactEffect, vtabl[CBaseEntityDoImpactEffect_offset])
+			CBaseEntityDoImpactEffectDetour->EnableDetour();
 
 			baseentity_funcs_detoured = true;
 		}
@@ -2655,6 +2761,9 @@ DETOUR_DECL_MEMBER4(KeyValuesLoadFromFile, bool, IBaseFileSystem *,filesystem, c
 }
 
 CDetour *CBaseCombatWeaponGetNameDetour{nullptr};
+CDetour *CTFPlayerFireBulletDetour{nullptr};
+CDetour *CTFPlayerImpactWaterTraceDetour{nullptr};
+CDetour *UTIL_ImpactTraceDetour{nullptr};
 
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
@@ -2711,6 +2820,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	g_pGameConf->GetOffset("CBaseEntity::GetTracerAttachment", &CBaseEntityGetTracerAttachment_offset);
 	g_pGameConf->GetOffset("CBaseEntity::MakeTracer", &CBaseEntityMakeTracer_offset);
 	g_pGameConf->GetOffset("CBaseEntity::GetTracerType", &CBaseEntityGetTracerType_offset);
+	g_pGameConf->GetOffset("CBaseEntity::DoImpactEffect", &CBaseEntityDoImpactEffect_offset);
 
 	g_pGameConf->GetOffset("CGameRules::IsMultiplayer", &CGameRulesIsMultiplayer);
 
@@ -2774,6 +2884,15 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	CBaseCombatWeaponGetNameDetour = DETOUR_CREATE_MEMBER(CBaseCombatWeaponGetName, "CBaseCombatWeapon::GetName")
 	CBaseCombatWeaponGetNameDetour->EnableDetour();
 
+	CTFPlayerFireBulletDetour = DETOUR_CREATE_MEMBER(CTFPlayerFireBullet, "CTFPlayer::FireBullet")
+	CTFPlayerFireBulletDetour->EnableDetour();
+
+	CTFPlayerImpactWaterTraceDetour = DETOUR_CREATE_MEMBER(CTFPlayerImpactWaterTrace, "CTFPlayer::ImpactWaterTrace")
+	CTFPlayerImpactWaterTraceDetour->EnableDetour();
+
+	UTIL_ImpactTraceDetour = DETOUR_CREATE_STATIC(UTIL_ImpactTraceCallback, "UTIL_ImpactTrace")
+	UTIL_ImpactTraceDetour->EnableDetour();
+
 	sm_sendprop_info_t tmp_sp_info;
 
 	gamehelpers->FindSendPropInfo("CTFWeaponBase", "m_flReloadPriorNextFire", &tmp_sp_info);
@@ -2786,8 +2905,10 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	g_pGameConf->GetOffset("CTFWeaponBase::m_iWeaponMode", &tmp_off);
 	CTFWeaponBase_m_iWeaponMode_offset -= tmp_off;
 
-	translate_weapon_classname = forwards->CreateForward("translate_weapon_classname", ET_Event, 6, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_String, Param_String, Param_Cell);
-	get_weapon_script = forwards->CreateForward("get_weapon_script", ET_Event, 4, nullptr, Param_Cell, Param_String, Param_String, Param_Cell);
+	translate_weapon_classname = forwards->CreateForward("translate_weapon_classname", ET_Hook, 6, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_String, Param_String, Param_Cell);
+	get_weapon_script = forwards->CreateForward("get_weapon_script", ET_Hook, 4, nullptr, Param_Cell, Param_String, Param_String, Param_Cell);
+
+	entity_impact_effect = forwards->CreateForward("entity_impact_effect", ET_Hook, 3, nullptr, Param_Cell, Param_Array, Param_Cell);
 
 	ammo_handle = handlesys->CreateType("ammotype", this, 0, nullptr, nullptr, myself->GetIdentity(), nullptr);
 
@@ -2822,6 +2943,7 @@ void Sample::SDK_OnUnload()
 {
 	forwards->ReleaseForward(translate_weapon_classname);
 	forwards->ReleaseForward(get_weapon_script);
+	forwards->ReleaseForward(entity_impact_effect);
 
 	TranslateWeaponEntForClassDetour->Destroy();
 	ReadWeaponDataFromFileForSlotDetour->Destroy();
@@ -2842,6 +2964,10 @@ void Sample::SDK_OnUnload()
 
 	CBaseCombatWeaponGetNameDetour->Destroy();
 
+	CTFPlayerFireBulletDetour->Destroy();
+	CTFPlayerImpactWaterTraceDetour->Destroy();
+	UTIL_ImpactTraceDetour->Destroy();
+
 	if(CBaseEntityGetTracerAttachmentDetour) {
 		CBaseEntityGetTracerAttachmentDetour->Destroy();
 	}
@@ -2852,6 +2978,10 @@ void Sample::SDK_OnUnload()
 
 	if(CBaseEntityGetTracerTypeDetour) {
 		CBaseEntityGetTracerTypeDetour->Destroy();
+	}
+
+	if(CBaseEntityDoImpactEffectDetour) {
+		CBaseEntityDoImpactEffectDetour->Destroy();
 	}
 
 	GuessDamageForceDetour->Destroy();
