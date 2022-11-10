@@ -640,7 +640,7 @@ stock CustomDatamap register_weapon(const char[] classname, const char[] name, W
 	netname[0] = 'C';
 	strcopy(netname[1], sizeof(netname)-1, name);
 
-	CustomEntityFactory factory = EntityFactoryDictionary.register_based_name(classname, based);
+	CustomEntityFactory factory = EntityFactoryDictionary.register_based(classname, based);
 	CustomDatamap datamap = CustomDatamap.from_factory(factory);
 	datamap.set_name(netname);
 
