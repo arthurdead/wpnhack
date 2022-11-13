@@ -29,6 +29,8 @@
  * Version: $Id$
  */
 
+#define GAME_DLL
+
 #include <utility>
 #include <unordered_map>
 #include <string>
@@ -666,6 +668,28 @@ public:
 		call_mfunc<void, CTFWeaponInfo, KeyValues *, const char *>(this, CTFWeaponInfoParseAddr, pKeyValuesData, szWeaponName);
 
 		m_WeaponData[TF_WEAPON_SECONDARY_MODE].m_flProjectileSpeed = pKeyValuesData->GetFloat("Secondary_ProjectileSpeed", 0.0f);
+
+		const char *pszWeaponType = pKeyValuesData->GetString( "WeaponType" );
+		if ( !Q_strcmp( pszWeaponType, "head" ) )
+		{
+			m_iWeaponType = TF_WPN_TYPE_HEAD;
+		}
+		else if ( !Q_strcmp( pszWeaponType, "misc" ) )
+		{
+			m_iWeaponType = TF_WPN_TYPE_MISC;
+		}
+		else if ( !Q_strcmp( pszWeaponType, "melee_allclass" ) )
+		{
+			m_iWeaponType = TF_WPN_TYPE_MELEE_ALLCLASS;
+		}
+		else if ( !Q_strcmp( pszWeaponType, "secondary2" ) )
+		{
+			m_iWeaponType = TF_WPN_TYPE_SECONDARY2;
+		}
+		else if ( !Q_strcmp( pszWeaponType, "primary2" ) )
+		{
+			m_iWeaponType = TF_WPN_TYPE_PRIMARY2;
+		}
 	}
 
 	CTFWeaponInfo() = delete;
@@ -710,6 +734,39 @@ public:
 
 #define GAME_WEP_INFO CTFWeaponInfo
 
+const char *g_szWeaponTypeSubstrings[] =
+{
+	// Weapons & Equipment
+	"PRIMARY",
+	"SECONDARY",
+	"MELEE",
+	"GRENADE",
+	"BUILDING",
+	"PDA",
+	"ITEM1",
+	"ITEM2",
+	"HEAD",
+	"MISC",
+	"MELEE_ALLCLASS",
+	"SECONDARY2",
+	"PRIMARY2"
+};
+COMPILE_TIME_ASSERT( ARRAYSIZE( g_szWeaponTypeSubstrings ) == TF_WPN_TYPE_COUNT );
+
+int StringFieldToInt( const char *szValue, const char **pValueStrings, int iNumStrings ) 
+{
+	if ( !szValue || !szValue[0] )
+		return -1;
+
+	for ( int i = 0; i < iNumStrings; i++ )
+	{
+		if ( !Q_stricmp(szValue, pValueStrings[i]) )
+			return i;
+	}
+
+	return -1;
+}
+
 class custom_weapon_info final : public GAME_WEP_INFO
 {
 public:
@@ -725,8 +782,8 @@ public:
 
 	struct custom_weapon_data
 	{
-		float m_flProjectileGravity = 0.0;
-		float m_flProjectileSpread = 0.0;
+		float m_flProjectileGravity;
+		float m_flProjectileSpread;
 
 		void Init()
 		{
@@ -754,37 +811,49 @@ public:
 	}
 };
 
+ConVar *mp_forceactivityset{nullptr};
+
+custom_weapon_info *get_wpn_info(void *pweapon)
+{
+	return (custom_weapon_info *)(*reinterpret_cast<CTFWeaponInfo **>(reinterpret_cast<unsigned char *>(pweapon) + CTFWeaponBase_m_pWeaponInfo_offset));
+}
+
+int get_wpn_mode(void *pweapon)
+{
+	return *reinterpret_cast<int *>(reinterpret_cast<unsigned char *>(pweapon) + CTFWeaponBase_m_iWeaponMode_offset);
+}
+
 DETOUR_DECL_MEMBER0(CTFWeaponBaseGunGetProjectileSpeed, float)
 {
-	CTFWeaponInfo *m_pWeaponInfo = *reinterpret_cast<CTFWeaponInfo **>(reinterpret_cast<unsigned char *>(this) + CTFWeaponBase_m_pWeaponInfo_offset);
+	custom_weapon_info *m_pWeaponInfo = get_wpn_info(this);
 	if(!m_pWeaponInfo) {
-		return 0.0;
+		return 0.0f;
 	}
 
-	int m_iWeaponMode = *reinterpret_cast<int *>(reinterpret_cast<unsigned char *>(this) + CTFWeaponBase_m_iWeaponMode_offset);
+	int m_iWeaponMode = get_wpn_mode(this);
 	return m_pWeaponInfo->m_WeaponData[m_iWeaponMode].m_flProjectileSpeed;
 }
 
 DETOUR_DECL_MEMBER0(CTFWeaponBaseGunGetProjectileGravity, float)
 {
-	CTFWeaponInfo *m_pWeaponInfo = *reinterpret_cast<CTFWeaponInfo **>(reinterpret_cast<unsigned char *>(this) + CTFWeaponBase_m_pWeaponInfo_offset);
+	custom_weapon_info *m_pWeaponInfo = get_wpn_info(this);
 	if(!m_pWeaponInfo) {
-		return 0.0;
+		return 0.0f;
 	}
 
-	int m_iWeaponMode = *reinterpret_cast<int *>(reinterpret_cast<unsigned char *>(this) + CTFWeaponBase_m_iWeaponMode_offset);
-	return reinterpret_cast<custom_weapon_info *>(m_pWeaponInfo)->m_WeaponDataCustom[m_iWeaponMode].m_flProjectileGravity;
+	int m_iWeaponMode = get_wpn_mode(this);
+	return m_pWeaponInfo->m_WeaponDataCustom[m_iWeaponMode].m_flProjectileGravity;
 }
 
 DETOUR_DECL_MEMBER0(CTFWeaponBaseGunGetProjectileSpread, float)
 {
-	CTFWeaponInfo *m_pWeaponInfo = *reinterpret_cast<CTFWeaponInfo **>(reinterpret_cast<unsigned char *>(this) + CTFWeaponBase_m_pWeaponInfo_offset);
+	custom_weapon_info *m_pWeaponInfo = get_wpn_info(this);
 	if(!m_pWeaponInfo) {
 		return 0.0;
 	}
 
-	int m_iWeaponMode = *reinterpret_cast<int *>(reinterpret_cast<unsigned char *>(this) + CTFWeaponBase_m_iWeaponMode_offset);
-	return reinterpret_cast<custom_weapon_info *>(m_pWeaponInfo)->m_WeaponDataCustom[m_iWeaponMode].m_flProjectileSpread;
+	int m_iWeaponMode = get_wpn_mode(this);
+	return m_pWeaponInfo->m_WeaponDataCustom[m_iWeaponMode].m_flProjectileSpread;
 }
 
 #include <sourcehook/sh_memory.h>
@@ -2767,6 +2836,328 @@ CDetour *UTIL_ImpactTraceDetour{nullptr};
 
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
+	if(!gameconfs->LoadGameConfigFile("sdktools.games", &g_pGameConf, error, maxlen)) {
+		return false;
+	}
+	
+	g_szGameRulesProxy = g_pGameConf->GetKeyValue("GameRulesProxy");
+	
+	gameconfs->CloseGameConfigFile(g_pGameConf);
+
+	if(!gameconfs->LoadGameConfigFile("wpnhack", &g_pGameConf, error, maxlen)) {
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CGameRules::GetEncryptionKey", &GetEncryptionKeyoffset);
+	if(GetEncryptionKeyoffset == -1) {
+		snprintf(error, maxlen, "could not get CGameRules::GetEncryptionKey offset");
+		return false;
+	}
+
+	g_pGameConf->GetMemSig("GetFileWeaponInfoFromHandle", &GetFileWeaponInfoFromHandleAddr);
+	if(GetFileWeaponInfoFromHandleAddr == nullptr) {
+		snprintf(error, maxlen, "could not get GetFileWeaponInfoFromHandle address");
+		return false;
+	}
+
+	g_pGameConf->GetMemSig("m_WeaponInfoDatabase", &m_WeaponInfoDatabaseAddr);
+	if(m_WeaponInfoDatabaseAddr == nullptr) {
+		snprintf(error, maxlen, "could not get m_WeaponInfoDatabase address");
+		return false;
+	}
+
+	g_pGameConf->GetMemSig("FileWeaponInfo_t::Parse", &FileWeaponInfo_tParseAddr);
+	if(FileWeaponInfo_tParseAddr == nullptr) {
+		snprintf(error, maxlen, "could not get FileWeaponInfo_t::Parse address");
+		return false;
+	}
+
+	g_pGameConf->GetMemSig("CTFWeaponInfo::Parse", &CTFWeaponInfoParseAddr);
+	if(CTFWeaponInfoParseAddr == nullptr) {
+		snprintf(error, maxlen, "could not get CTFWeaponInfo::Parse address");
+		return false;
+	}
+
+	g_pGameConf->GetMemSig("CTFWeaponInfo::CTFWeaponInfo", &CTFWeaponInfoCTOR);
+	if(CTFWeaponInfoCTOR == nullptr) {
+		snprintf(error, maxlen, "could not get CTFWeaponInfo::CTFWeaponInfo address");
+		return false;
+	}
+
+	g_pGameConf->GetMemSig("GetAmmoDef", &GetAmmoDefAddr);
+	if(GetAmmoDefAddr == nullptr) {
+		snprintf(error, maxlen, "could not get GetAmmoDef address");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CGameRules::GetAmmoQuantityScale", &CGameRulesGetAmmoQuantityScale);
+	if(CGameRulesGetAmmoQuantityScale == -1) {
+		snprintf(error, maxlen, "could not get CGameRules::GetAmmoQuantityScale offset");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CGameRules::GetSkillLevel", &CGameRulesGetSkillLevel);
+	if(CGameRulesGetSkillLevel == -1) {
+		snprintf(error, maxlen, "could not get CGameRules::GetSkillLevel offset");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CBaseEntity::FireBullets", &CBaseEntityFireBullets);
+	if(CBaseEntityFireBullets == -1) {
+		snprintf(error, maxlen, "could not get CBaseEntity::FireBullets offset");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CBaseEntity::Touch", &CBaseEntityTouch);
+	if(CBaseEntityTouch == -1) {
+		snprintf(error, maxlen, "could not get CBaseEntity::Touch offset");
+		return false;
+	}
+
+	g_pGameConf->GetMemSig("CBaseEntity::CalcAbsolutePosition", &CBaseEntityCalcAbsolutePosition);
+	if(CBaseEntityCalcAbsolutePosition == nullptr) {
+		snprintf(error, maxlen, "could not get CBaseEntity::CalcAbsolutePosition address");
+		return false;
+	}
+
+	g_pGameConf->GetMemSig("CTFPlayer::GiveNamedItem", &CTFPlayerGiveNamedItemPtr);
+	if(CTFPlayerGiveNamedItemPtr == nullptr) {
+		snprintf(error, maxlen, "could not get CTFPlayer::GiveNamedItem address");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CBaseCombatCharacter::Weapon_Equip", &CBaseCombatCharacterWeapon_Equip);
+	if(CBaseCombatCharacterWeapon_Equip == -1) {
+		snprintf(error, maxlen, "could not get CBaseCombatCharacter::Weapon_Equip offset");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CBaseCombatWeapon::GetSubType", &CBaseCombatWeaponGetSubType);
+	if(CBaseCombatWeaponGetSubType == -1) {
+		snprintf(error, maxlen, "could not get CBaseCombatWeapon::GetSubType offset");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CBaseCombatWeapon::SetSubType", &CBaseCombatWeaponSetSubType);
+	if(CBaseCombatWeaponSetSubType == -1) {
+		snprintf(error, maxlen, "could not get CBaseCombatWeapon::SetSubType offset");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CBaseEntity::GetTracerAttachment", &CBaseEntityGetTracerAttachment_offset);
+	if(CBaseEntityGetTracerAttachment_offset == -1) {
+		snprintf(error, maxlen, "could not get CBaseEntity::GetTracerAttachment offset");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CBaseEntity::MakeTracer", &CBaseEntityMakeTracer_offset);
+	if(CBaseEntityMakeTracer_offset == -1) {
+		snprintf(error, maxlen, "could not get CBaseEntity::MakeTracer offset");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CBaseEntity::GetTracerType", &CBaseEntityGetTracerType_offset);
+	if(CBaseEntityGetTracerType_offset == -1) {
+		snprintf(error, maxlen, "could not get CBaseEntity::GetTracerType offset");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CBaseEntity::DoImpactEffect", &CBaseEntityDoImpactEffect_offset);
+	if(CBaseEntityDoImpactEffect_offset == -1) {
+		snprintf(error, maxlen, "could not get CBaseEntity::DoImpactEffect offset");
+		return false;
+	}
+
+	g_pGameConf->GetOffset("CGameRules::IsMultiplayer", &CGameRulesIsMultiplayer);
+	if(CGameRulesIsMultiplayer == -1) {
+		snprintf(error, maxlen, "could not get CGameRules::IsMultiplayer offset");
+		return false;
+	}
+
+	g_pGameConf->GetMemSig("UTIL_Tracer", &UTIL_TracerPtr);
+	if(UTIL_TracerPtr == nullptr) {
+		snprintf(error, maxlen, "could not get UTIL_Tracer address");
+		return false;
+	}
+
+	g_pGameConf->GetMemSig("UTIL_ParticleTracer", &UTIL_ParticleTracerPtr);
+	if(UTIL_ParticleTracerPtr == nullptr) {
+		snprintf(error, maxlen, "could not get UTIL_ParticleTracer address");
+		return false;
+	}
+
+	int CTFWeaponBasem_pWeaponInfo{-1};
+	g_pGameConf->GetOffset("CTFWeaponBase::m_pWeaponInfo", &CTFWeaponBasem_pWeaponInfo);
+	if(CTFWeaponBasem_pWeaponInfo == -1) {
+		snprintf(error, maxlen, "could not get CTFWeaponBase::m_pWeaponInfo offset");
+		return false;
+	}
+
+	int CTFWeaponBasem_iWeaponMode{-1};
+	g_pGameConf->GetOffset("CTFWeaponBase::m_iWeaponMode", &CTFWeaponBasem_iWeaponMode);
+	if(CTFWeaponBasem_iWeaponMode == -1) {
+		snprintf(error, maxlen, "could not get CTFWeaponBase::m_iWeaponMode offset");
+		return false;
+	}
+
+	CDetourManager::Init(g_pSM->GetScriptingEngine(), g_pGameConf);
+
+	pKeyValuesLoadFromFile = DETOUR_CREATE_MEMBER(KeyValuesLoadFromFile, "KeyValues::LoadFromFile")
+	if(!pKeyValuesLoadFromFile) {
+		snprintf(error, maxlen, "could not create KeyValues::LoadFromFile detour");
+		return false;
+	}
+
+	TranslateWeaponEntForClassDetour = DETOUR_CREATE_STATIC(TranslateWeaponEntForClass, "TranslateWeaponEntForClass")
+	if(!TranslateWeaponEntForClassDetour) {
+		snprintf(error, maxlen, "could not create TranslateWeaponEntForClass detour");
+		return false;
+	}
+
+	GuessDamageForceDetour = DETOUR_CREATE_STATIC(GuessDamageForce, "GuessDamageForce")
+	if(!GuessDamageForceDetour) {
+		snprintf(error, maxlen, "could not create GuessDamageForce detour");
+		return false;
+	}
+
+	ReadWeaponDataFromFileForSlotDetour = DETOUR_CREATE_STATIC(ReadWeaponDataFromFileForSlot, "ReadWeaponDataFromFileForSlot")
+	if(!ReadWeaponDataFromFileForSlotDetour) {
+		snprintf(error, maxlen, "could not create ReadWeaponDataFromFileForSlot detour");
+		return false;
+	}
+
+	FX_FireBulletsDetour = DETOUR_CREATE_STATIC(FX_FireBullets, "FX_FireBullets")
+	if(!FX_FireBulletsDetour) {
+		snprintf(error, maxlen, "could not create FX_FireBullets detour");
+		return false;
+	}
+
+	LookupWeaponInfoSlotDetour = DETOUR_CREATE_STATIC(LookupWeaponInfoSlot, "LookupWeaponInfoSlot")
+	if(!LookupWeaponInfoSlotDetour) {
+		snprintf(error, maxlen, "could not create LookupWeaponInfoSlot detour");
+		return false;
+	}
+
+	CBaseCombatWeaponPrecacheDetour = DETOUR_CREATE_MEMBER(CBaseCombatWeaponPrecache, "CBaseCombatWeapon::Precache")
+	if(!CBaseCombatWeaponPrecacheDetour) {
+		snprintf(error, maxlen, "could not create CBaseCombatWeapon::Precache detour");
+		return false;
+	}
+
+	CTFWeaponBaseSpawnDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseSpawn, "CTFWeaponBase::Spawn")
+	if(!CTFWeaponBaseSpawnDetour) {
+		snprintf(error, maxlen, "could not create CTFWeaponBase::Spawn detour");
+		return false;
+	}
+
+	CTFWeaponBaseMeleeSpawnDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseMeleeSpawn, "CTFWeaponBaseMelee::Spawn")
+	if(!CTFWeaponBaseMeleeSpawnDetour) {
+		snprintf(error, maxlen, "could not create CTFWeaponBaseMelee::Spawn detour");
+		return false;
+	}
+
+	CTFPlayerItemsMatchDetour = DETOUR_CREATE_MEMBER(CTFPlayerItemsMatch, "CTFPlayer::ItemsMatch")
+	if(!CTFPlayerItemsMatchDetour) {
+		snprintf(error, maxlen, "could not create CTFPlayer::ItemsMatch detour");
+		return false;
+	}
+
+	CTFPlayerGiveNamedItemDetour = DETOUR_CREATE_MEMBER(CTFPlayerGiveNamedItem, "CTFPlayer::GiveNamedItem")
+	if(!CTFPlayerGiveNamedItemDetour) {
+		snprintf(error, maxlen, "could not create CTFPlayer::GiveNamedItem detour");
+		return false;
+	}
+
+	CTFPlayerPickupWeaponFromOtherDetour = DETOUR_CREATE_MEMBER(CTFPlayerPickupWeaponFromOther, "CTFPlayer::PickupWeaponFromOther")
+	if(!CTFPlayerPickupWeaponFromOtherDetour) {
+		snprintf(error, maxlen, "could not create CTFPlayer::PickupWeaponFromOther detour");
+		return false;
+	}
+
+	CreateWeaponInfoDetour = DETOUR_CREATE_STATIC(CreateWeaponInfo, "CreateWeaponInfo")
+	if(!CreateWeaponInfoDetour) {
+		snprintf(error, maxlen, "could not create CreateWeaponInfo detour");
+		return false;
+	}
+
+	CTFWeaponBaseGunGetProjectileSpeedDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseGunGetProjectileSpeed, "CTFWeaponBaseGun::GetProjectileSpeed")
+	if(!CTFWeaponBaseGunGetProjectileSpeedDetour) {
+		snprintf(error, maxlen, "could not create CTFWeaponBaseGun::GetProjectileSpeed detour");
+		return false;
+	}
+
+	CTFWeaponBaseGunGetProjectileGravityDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseGunGetProjectileGravity, "CTFWeaponBaseGun::GetProjectileGravity")
+	if(!CTFWeaponBaseGunGetProjectileGravityDetour) {
+		snprintf(error, maxlen, "could not create CTFWeaponBaseGun::GetProjectileGravity detour");
+		return false;
+	}
+
+	CTFWeaponBaseGunGetProjectileSpreadDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseGunGetProjectileSpread, "CTFWeaponBaseGun::GetProjectileSpread")
+	if(!CTFWeaponBaseGunGetProjectileSpreadDetour) {
+		snprintf(error, maxlen, "could not create CTFWeaponBaseGun::GetProjectileSpread detour");
+		return false;
+	}
+
+	CBaseCombatWeaponGetNameDetour = DETOUR_CREATE_MEMBER(CBaseCombatWeaponGetName, "CBaseCombatWeapon::GetName")
+	if(!CBaseCombatWeaponGetNameDetour) {
+		snprintf(error, maxlen, "could not create CBaseCombatWeapon::GetName detour");
+		return false;
+	}
+
+	CTFPlayerFireBulletDetour = DETOUR_CREATE_MEMBER(CTFPlayerFireBullet, "CTFPlayer::FireBullet")
+	if(!CTFPlayerFireBulletDetour) {
+		snprintf(error, maxlen, "could not create CTFPlayer::FireBullet detour");
+		return false;
+	}
+
+	CTFPlayerImpactWaterTraceDetour = DETOUR_CREATE_MEMBER(CTFPlayerImpactWaterTrace, "CTFPlayer::ImpactWaterTrace")
+	if(!CTFPlayerImpactWaterTraceDetour) {
+		snprintf(error, maxlen, "could not create CTFPlayer::ImpactWaterTrace detour");
+		return false;
+	}
+
+	UTIL_ImpactTraceDetour = DETOUR_CREATE_STATIC(UTIL_ImpactTraceCallback, "UTIL_ImpactTrace")
+	if(!UTIL_ImpactTraceDetour) {
+		snprintf(error, maxlen, "could not create UTIL_ImpactTrace detour");
+		return false;
+	}
+
+	UTIL_ImpactTraceDetour->EnableDetour();
+	pKeyValuesLoadFromFile->EnableDetour();
+	TranslateWeaponEntForClassDetour->EnableDetour();
+	GuessDamageForceDetour->EnableDetour();
+	ReadWeaponDataFromFileForSlotDetour->EnableDetour();
+	FX_FireBulletsDetour->EnableDetour();
+	LookupWeaponInfoSlotDetour->EnableDetour();
+	CBaseCombatWeaponPrecacheDetour->EnableDetour();
+	CTFWeaponBaseSpawnDetour->EnableDetour();
+	CTFWeaponBaseMeleeSpawnDetour->EnableDetour();
+	CTFPlayerItemsMatchDetour->EnableDetour();
+	CTFPlayerGiveNamedItemDetour->EnableDetour();
+	CTFPlayerPickupWeaponFromOtherDetour->EnableDetour();
+	CreateWeaponInfoDetour->EnableDetour();
+	CTFWeaponBaseGunGetProjectileSpeedDetour->EnableDetour();
+	CTFWeaponBaseGunGetProjectileGravityDetour->EnableDetour();
+	CTFWeaponBaseGunGetProjectileSpreadDetour->EnableDetour();
+	CBaseCombatWeaponGetNameDetour->EnableDetour();
+	CTFPlayerFireBulletDetour->EnableDetour();
+	CTFPlayerImpactWaterTraceDetour->EnableDetour();
+
+	FileWeaponInfo_tParse_offset = vfunc_index(&FileWeaponInfo_t::Parse);
+
+	sm_sendprop_info_t tmp_sp_info;
+	gamehelpers->FindSendPropInfo("CTFWeaponBase", "m_flReloadPriorNextFire", &tmp_sp_info);
+	CTFWeaponBase_m_pWeaponInfo_offset = tmp_sp_info.actual_offset;
+	CTFWeaponBase_m_pWeaponInfo_offset += CTFWeaponBasem_pWeaponInfo;
+
+	gamehelpers->FindSendPropInfo("CTFWeaponBase", "m_iReloadMode", &tmp_sp_info);
+	CTFWeaponBase_m_iWeaponMode_offset = tmp_sp_info.actual_offset;
+	CTFWeaponBase_m_iWeaponMode_offset -= CTFWeaponBasem_iWeaponMode;
+
+	dictionary = servertools->GetEntityFactoryDictionary();
+
+	g_pEntityList = reinterpret_cast<CBaseEntityList *>(gamehelpers->GetGlobalEntityList());
+
 	char pPath[MAX_PATH];
 	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "data/weapons");
 	filesystem->AddSearchPath( pPath, "WEAPONS" );
@@ -2778,132 +3169,6 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	filesystem->AddSearchPath( pPath, "WEAPONS" );
 	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "tf2_misc_dir.vpk");
 	filesystem->AddSearchPath( pPath, "WEAPONS" );
-
-	gameconfs->LoadGameConfigFile("sdktools.games", &g_pGameConf, nullptr, 0);
-	
-	g_szGameRulesProxy = g_pGameConf->GetKeyValue("GameRulesProxy");
-	
-	gameconfs->CloseGameConfigFile(g_pGameConf);
-
-	gameconfs->LoadGameConfigFile("wpnhack", &g_pGameConf, nullptr, 0);
-
-	CDetourManager::Init(g_pSM->GetScriptingEngine(), g_pGameConf);
-
-	g_pGameConf->GetOffset("CGameRules::GetEncryptionKey", &GetEncryptionKeyoffset);
-	g_pGameConf->GetMemSig("GetFileWeaponInfoFromHandle", &GetFileWeaponInfoFromHandleAddr);
-	g_pGameConf->GetMemSig("m_WeaponInfoDatabase", &m_WeaponInfoDatabaseAddr);
-
-	g_pGameConf->GetMemSig("FileWeaponInfo_t::Parse", &FileWeaponInfo_tParseAddr);
-	g_pGameConf->GetMemSig("CTFWeaponInfo::Parse", &CTFWeaponInfoParseAddr);
-
-	g_pGameConf->GetMemSig("CTFWeaponInfo::CTFWeaponInfo", &CTFWeaponInfoCTOR);
-
-	FileWeaponInfo_tParse_offset = vfunc_index(&FileWeaponInfo_t::Parse);
-
-	g_pGameConf->GetMemSig("GetAmmoDef", &GetAmmoDefAddr);
-
-	g_pGameConf->GetOffset("CGameRules::GetAmmoQuantityScale", &CGameRulesGetAmmoQuantityScale);
-	g_pGameConf->GetOffset("CGameRules::GetSkillLevel", &CGameRulesGetSkillLevel);
-
-	g_pGameConf->GetOffset("CBaseEntity::FireBullets", &CBaseEntityFireBullets);
-	g_pGameConf->GetOffset("CBaseEntity::Touch", &CBaseEntityTouch);
-
-	g_pGameConf->GetMemSig("CBaseEntity::CalcAbsolutePosition", &CBaseEntityCalcAbsolutePosition);
-
-	g_pGameConf->GetMemSig("CTFPlayer::GiveNamedItem", &CTFPlayerGiveNamedItemPtr);
-
-	g_pGameConf->GetOffset("CBaseCombatCharacter::Weapon_Equip", &CBaseCombatCharacterWeapon_Equip);
-
-	g_pGameConf->GetOffset("CBaseCombatWeapon::GetSubType", &CBaseCombatWeaponGetSubType);
-	g_pGameConf->GetOffset("CBaseCombatWeapon::SetSubType", &CBaseCombatWeaponSetSubType);
-
-	g_pGameConf->GetOffset("CBaseEntity::GetTracerAttachment", &CBaseEntityGetTracerAttachment_offset);
-	g_pGameConf->GetOffset("CBaseEntity::MakeTracer", &CBaseEntityMakeTracer_offset);
-	g_pGameConf->GetOffset("CBaseEntity::GetTracerType", &CBaseEntityGetTracerType_offset);
-	g_pGameConf->GetOffset("CBaseEntity::DoImpactEffect", &CBaseEntityDoImpactEffect_offset);
-
-	g_pGameConf->GetOffset("CGameRules::IsMultiplayer", &CGameRulesIsMultiplayer);
-
-	g_pGameConf->GetMemSig("UTIL_Tracer", &UTIL_TracerPtr);
-	g_pGameConf->GetMemSig("UTIL_ParticleTracer", &UTIL_ParticleTracerPtr);
-
-	pKeyValuesLoadFromFile = DETOUR_CREATE_MEMBER(KeyValuesLoadFromFile, "KeyValues::LoadFromFile")
-	pKeyValuesLoadFromFile->EnableDetour();
-
-	dictionary = servertools->GetEntityFactoryDictionary();
-
-	g_pEntityList = reinterpret_cast<CBaseEntityList *>(gamehelpers->GetGlobalEntityList());
-
-	int tmp_off;
-
-	TranslateWeaponEntForClassDetour = DETOUR_CREATE_STATIC(TranslateWeaponEntForClass, "TranslateWeaponEntForClass")
-	TranslateWeaponEntForClassDetour->EnableDetour();
-
-	GuessDamageForceDetour = DETOUR_CREATE_STATIC(GuessDamageForce, "GuessDamageForce")
-	GuessDamageForceDetour->EnableDetour();
-
-	ReadWeaponDataFromFileForSlotDetour = DETOUR_CREATE_STATIC(ReadWeaponDataFromFileForSlot, "ReadWeaponDataFromFileForSlot")
-	ReadWeaponDataFromFileForSlotDetour->EnableDetour();
-
-	FX_FireBulletsDetour = DETOUR_CREATE_STATIC(FX_FireBullets, "FX_FireBullets")
-	FX_FireBulletsDetour->EnableDetour();
-
-	LookupWeaponInfoSlotDetour = DETOUR_CREATE_STATIC(LookupWeaponInfoSlot, "LookupWeaponInfoSlot")
-	LookupWeaponInfoSlotDetour->EnableDetour();
-
-	CBaseCombatWeaponPrecacheDetour = DETOUR_CREATE_MEMBER(CBaseCombatWeaponPrecache, "CBaseCombatWeapon::Precache")
-	CBaseCombatWeaponPrecacheDetour->EnableDetour();
-
-	CTFWeaponBaseSpawnDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseSpawn, "CTFWeaponBase::Spawn")
-	CTFWeaponBaseSpawnDetour->EnableDetour();
-
-	CTFWeaponBaseMeleeSpawnDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseMeleeSpawn, "CTFWeaponBaseMelee::Spawn")
-	CTFWeaponBaseMeleeSpawnDetour->EnableDetour();
-
-	CTFPlayerItemsMatchDetour = DETOUR_CREATE_MEMBER(CTFPlayerItemsMatch, "CTFPlayer::ItemsMatch")
-	CTFPlayerItemsMatchDetour->EnableDetour();
-
-	CTFPlayerGiveNamedItemDetour = DETOUR_CREATE_MEMBER(CTFPlayerGiveNamedItem, "CTFPlayer::GiveNamedItem")
-	CTFPlayerGiveNamedItemDetour->EnableDetour();
-
-	CTFPlayerPickupWeaponFromOtherDetour = DETOUR_CREATE_MEMBER(CTFPlayerPickupWeaponFromOther, "CTFPlayer::PickupWeaponFromOther")
-	CTFPlayerPickupWeaponFromOtherDetour->EnableDetour();
-
-	CreateWeaponInfoDetour = DETOUR_CREATE_STATIC(CreateWeaponInfo, "CreateWeaponInfo")
-	CreateWeaponInfoDetour->EnableDetour();
-
-	CTFWeaponBaseGunGetProjectileSpeedDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseGunGetProjectileSpeed, "CTFWeaponBaseGun::GetProjectileSpeed")
-	CTFWeaponBaseGunGetProjectileSpeedDetour->EnableDetour();
-
-	CTFWeaponBaseGunGetProjectileGravityDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseGunGetProjectileGravity, "CTFWeaponBaseGun::GetProjectileGravity")
-	CTFWeaponBaseGunGetProjectileGravityDetour->EnableDetour();
-
-	CTFWeaponBaseGunGetProjectileSpreadDetour = DETOUR_CREATE_MEMBER(CTFWeaponBaseGunGetProjectileSpread, "CTFWeaponBaseGun::GetProjectileSpread")
-	CTFWeaponBaseGunGetProjectileSpreadDetour->EnableDetour();
-
-	CBaseCombatWeaponGetNameDetour = DETOUR_CREATE_MEMBER(CBaseCombatWeaponGetName, "CBaseCombatWeapon::GetName")
-	CBaseCombatWeaponGetNameDetour->EnableDetour();
-
-	CTFPlayerFireBulletDetour = DETOUR_CREATE_MEMBER(CTFPlayerFireBullet, "CTFPlayer::FireBullet")
-	CTFPlayerFireBulletDetour->EnableDetour();
-
-	CTFPlayerImpactWaterTraceDetour = DETOUR_CREATE_MEMBER(CTFPlayerImpactWaterTrace, "CTFPlayer::ImpactWaterTrace")
-	CTFPlayerImpactWaterTraceDetour->EnableDetour();
-
-	UTIL_ImpactTraceDetour = DETOUR_CREATE_STATIC(UTIL_ImpactTraceCallback, "UTIL_ImpactTrace")
-	UTIL_ImpactTraceDetour->EnableDetour();
-
-	sm_sendprop_info_t tmp_sp_info;
-
-	gamehelpers->FindSendPropInfo("CTFWeaponBase", "m_flReloadPriorNextFire", &tmp_sp_info);
-	CTFWeaponBase_m_pWeaponInfo_offset = tmp_sp_info.actual_offset;
-	g_pGameConf->GetOffset("CTFWeaponBase::m_pWeaponInfo", &tmp_off);
-	CTFWeaponBase_m_pWeaponInfo_offset += tmp_off;
-
-	gamehelpers->FindSendPropInfo("CTFWeaponBase", "m_iReloadMode", &tmp_sp_info);
-	CTFWeaponBase_m_iWeaponMode_offset = tmp_sp_info.actual_offset;
-	g_pGameConf->GetOffset("CTFWeaponBase::m_iWeaponMode", &tmp_off);
-	CTFWeaponBase_m_iWeaponMode_offset -= tmp_off;
 
 	translate_weapon_classname = forwards->CreateForward("translate_weapon_classname", ET_Hook, 6, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_String, Param_String, Param_Cell);
 	get_weapon_script = forwards->CreateForward("get_weapon_script", ET_Hook, 4, nullptr, Param_Cell, Param_String, Param_String, Param_Cell);
@@ -3012,6 +3277,7 @@ bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool l
 	g_pCVar = cvar;
 	ConVar_Register(0, this);
 
+	mp_forceactivityset = g_pCVar->FindVar("mp_forceactivityset");
 	phys_pushscale = g_pCVar->FindVar("phys_pushscale");
 
 	return true;
