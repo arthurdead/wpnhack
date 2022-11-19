@@ -5,8 +5,6 @@
 
 #if defined GAME_L4D2
 	#error L4D2 is not supported
-#elseif !defined GAME_TF2
-	#error please define GAME_TF2
 #endif
 
 #include <sdkhooks>
@@ -732,7 +730,7 @@ enum struct FireBulletsInfo_t
 	int m_iAmmoType;
 	int m_iTracerFreq;
 	float m_flDamage;
-#if defined GAME_TF2
+#if defined GAME_TF2 || 1
 	int m_iPlayerDamage;	// Damage to be used instead of m_flDamage if we hit a player
 #elseif defined GAME_L4D2
 	float m_flPlayerDamage;
@@ -742,7 +740,7 @@ enum struct FireBulletsInfo_t
 	int m_pAttacker;
 	int m_pAdditionalIgnoreEnt;
 	bool m_bPrimaryAttack;
-#if defined GAME_TF2
+#if defined GAME_TF2 || 1
 	bool m_bUseServerRandomSeed;
 #endif
 
