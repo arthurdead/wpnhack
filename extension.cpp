@@ -34,10 +34,8 @@
 #include <utility>
 #include <unordered_map>
 #include <string>
-#include <string_view>
 
 using namespace std::literals::string_literals;
-using namespace std::literals::string_view_literals;
 
 #ifndef FMTFUNCTION
 #define FMTFUNCTION(...)
