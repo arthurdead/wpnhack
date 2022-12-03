@@ -174,7 +174,7 @@
 		{
 			"CGameRules::GetEncryptionKey"
 			{
-				"linux" "27"
+				"linux" "36"
 			}
 			"CTFWeaponBase::m_pWeaponInfo"
 			{
@@ -198,31 +198,31 @@
 			}
 			"CBaseCombatWeapon::GetSubType"
 			{
-				"linux" "234"
+				"linux" "237"
 			}
 			"CBaseCombatWeapon::SetSubType"
 			{
-				"linux" "235"
+				"linux" "238"
 			}
 			"CBaseEntity::Touch"
 			{
-				"linux" "103"
+				"linux" "105"
 			}
 			"CBaseCombatCharacter::Weapon_Equip"
 			{
-				"linux" "269"
+				"linux" "272"
 			}
 			"CBaseEntity::GetTracerAttachment"
 			{
-				"linux" "115"
+				"linux" "117"
 			}
 			"CBaseEntity::MakeTracer"
 			{
-				"linux" "114"
+				"linux" "116"
 			}
 			"CBaseEntity::GetTracerType"
 			{
-				"linux" "22"
+				"linux" "24"
 			}
 			"CGameRules::IsMultiplayer"
 			{
@@ -230,7 +230,7 @@
 			}
 			"CBaseEntity::DoImpactEffect"
 			{
-				"linux" "117"
+				"linux" "119"
 			}
 		}
 	}
